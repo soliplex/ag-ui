@@ -340,5 +340,163 @@ void main() {
         expect(decoded.value, customValue);
       });
     });
+
+    group('ActivityEvents', () {
+      test('ActivitySnapshotEvent serialization with spec fields', () {
+        final content = {'skill': 'rag', 'tool_name': 'search'};
+        final event = ActivitySnapshotEvent(
+          messageId: 'rag:abc123',
+          activityType: 'skill_tool_call',
+          content: content,
+        );
+
+        final json = event.toJson();
+        expect(json['type'], 'ACTIVITY_SNAPSHOT');
+        expect(json['messageId'], 'rag:abc123');
+        expect(json['activityType'], 'skill_tool_call');
+        expect(json['content'], content);
+        expect(json['replace'], true);
+
+        final decoded = ActivitySnapshotEvent.fromJson(json);
+        expect(decoded.messageId, 'rag:abc123');
+        expect(decoded.activityType, 'skill_tool_call');
+        expect(decoded.content, content);
+        expect(decoded.replace, true);
+      });
+
+      test('ActivitySnapshotEvent replace can be set to false', () {
+        const event = ActivitySnapshotEvent(
+          messageId: 'msg-1',
+          activityType: 'test',
+          content: {},
+          replace: false,
+        );
+        expect(event.replace, false);
+
+        final json = event.toJson();
+        expect(json['replace'], false);
+
+        final decoded = ActivitySnapshotEvent.fromJson(json);
+        expect(decoded.replace, false);
+      });
+
+      test('ActivitySnapshotEvent fromJson with missing optional replace', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'msg-1',
+          'activityType': 'test',
+          'content': {'key': 'value'},
+        };
+
+        final event = ActivitySnapshotEvent.fromJson(json);
+        expect(event.messageId, 'msg-1');
+        expect(event.activityType, 'test');
+        expect(event.content, {'key': 'value'});
+        expect(event.replace, true);
+      });
+
+      test('ActivitySnapshotEvent fromJson throws on missing messageId', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'activityType': 'test',
+          'content': {'key': 'value'},
+        };
+
+        expect(
+          () => ActivitySnapshotEvent.fromJson(json),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('ActivitySnapshotEvent fromJson throws on missing activityType', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'msg-1',
+          'content': {'key': 'value'},
+        };
+
+        expect(
+          () => ActivitySnapshotEvent.fromJson(json),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('ActivitySnapshotEvent fromJson throws on missing content', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'msg-1',
+          'activityType': 'test',
+        };
+
+        expect(
+          () => ActivitySnapshotEvent.fromJson(json),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('ActivitySnapshotEvent copyWith preserves unchanged fields', () {
+        const event = ActivitySnapshotEvent(
+          messageId: 'msg-1',
+          activityType: 'test',
+          content: {'a': 1},
+          replace: false,
+          timestamp: 1000,
+        );
+
+        final withMessageId = event.copyWith(messageId: 'msg-2');
+        expect(withMessageId.messageId, 'msg-2');
+        expect(withMessageId.activityType, 'test');
+        expect(withMessageId.content, {'a': 1});
+        expect(withMessageId.replace, false);
+        expect(withMessageId.timestamp, 1000);
+
+        final withActivityType = event.copyWith(activityType: 'updated');
+        expect(withActivityType.messageId, 'msg-1');
+        expect(withActivityType.activityType, 'updated');
+
+        final withContent = event.copyWith(content: {'b': 2});
+        expect(withContent.content, {'b': 2});
+        expect(withContent.messageId, 'msg-1');
+
+        final withReplace = event.copyWith(replace: true);
+        expect(withReplace.replace, true);
+        expect(withReplace.messageId, 'msg-1');
+
+        final withTimestamp = event.copyWith(timestamp: 2000);
+        expect(withTimestamp.timestamp, 2000);
+        expect(withTimestamp.messageId, 'msg-1');
+      });
+
+      test('ActivitySnapshotEvent timestamp survives serialization', () {
+        const event = ActivitySnapshotEvent(
+          messageId: 'msg-1',
+          activityType: 'test',
+          content: {'key': 'value'},
+          timestamp: 1710000000,
+        );
+
+        final json = event.toJson();
+        expect(json['timestamp'], 1710000000);
+
+        final decoded = ActivitySnapshotEvent.fromJson(json);
+        expect(decoded.timestamp, 1710000000);
+      });
+
+      test('ActivitySnapshotEvent via BaseEvent.fromJson factory', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'rag:abc123',
+          'activityType': 'skill_tool_call',
+          'content': {'skill': 'rag'},
+          'replace': true,
+        };
+
+        final event = BaseEvent.fromJson(json);
+        expect(event, isA<ActivitySnapshotEvent>());
+        final activity = event as ActivitySnapshotEvent;
+        expect(activity.messageId, 'rag:abc123');
+        expect(activity.activityType, 'skill_tool_call');
+      });
+    });
   });
 }
