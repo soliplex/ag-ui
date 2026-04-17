@@ -274,6 +274,79 @@ void main() {
       });
     });
 
+    group('ReasoningEvents', () {
+      test('round-trips ReasoningStartEvent', () {
+        final event = ReasoningStartEvent(messageId: 'reas_1');
+        final decoded = ReasoningStartEvent.fromJson(event.toJson());
+        expect(decoded.messageId, 'reas_1');
+      });
+
+      test('round-trips ReasoningMessageContentEvent', () {
+        final event = ReasoningMessageContentEvent(
+          messageId: 'reas_1',
+          delta: 'thinking step',
+        );
+        final decoded = ReasoningMessageContentEvent.fromJson(event.toJson());
+        expect(decoded.delta, 'thinking step');
+      });
+
+      test('ReasoningMessageContentEvent rejects empty delta', () {
+        expect(
+          () => ReasoningMessageContentEvent.fromJson({
+            'type': 'REASONING_MESSAGE_CONTENT',
+            'messageId': 'reas_1',
+            'delta': '',
+          }),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('round-trips ReasoningEncryptedValueEvent', () {
+        final event = ReasoningEncryptedValueEvent(
+          subtype: ReasoningEncryptedValueSubtype.message,
+          entityId: 'reas_1',
+          encryptedValue: 'ENC',
+        );
+        final json = event.toJson();
+        expect(json['subtype'], 'message');
+        final decoded = ReasoningEncryptedValueEvent.fromJson(json);
+        expect(decoded.subtype, ReasoningEncryptedValueSubtype.message);
+      });
+
+      test('BaseEvent.fromJson routes REASONING_START', () {
+        final event = BaseEvent.fromJson({
+          'type': 'REASONING_START',
+          'messageId': 'reas_1',
+        });
+        expect(event, isA<ReasoningStartEvent>());
+      });
+    });
+
+    group('ActivityDeltaEvent', () {
+      test('round-trips patch array', () {
+        final event = ActivityDeltaEvent(
+          messageId: 'act_1',
+          activityType: 'upload',
+          patch: [
+            {'op': 'replace', 'path': '/progress', 'value': 0.75},
+          ],
+        );
+        final decoded = ActivityDeltaEvent.fromJson(event.toJson());
+        expect(decoded.patch, hasLength(1));
+        expect(decoded.activityType, 'upload');
+      });
+
+      test('BaseEvent.fromJson routes ACTIVITY_DELTA', () {
+        final event = BaseEvent.fromJson({
+          'type': 'ACTIVITY_DELTA',
+          'messageId': 'act_1',
+          'activityType': 'upload',
+          'patch': [],
+        });
+        expect(event, isA<ActivityDeltaEvent>());
+      });
+    });
+
     group('ThinkingEvents', () {
       test('ThinkingStartEvent with title', () {
         final event = ThinkingStartEvent(title: 'Processing request');
