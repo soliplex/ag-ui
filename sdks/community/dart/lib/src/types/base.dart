@@ -426,6 +426,177 @@ class JsonDecoder {
     );
   }
 
+  /// The largest integer JavaScript represents exactly (2^53 - 1), and the
+  /// bound the 1.0 schema puts on every integer field.
+  static const int maxSafeInteger = 9007199254740991;
+
+  /// Reads an optional integer field as the 1.0 schema defines one: a whole
+  /// number within ±[maxSafeInteger], and at least [minimum] when given.
+  ///
+  /// A whole-valued `double` is accepted, because that is how every number
+  /// arrives on the web. A fractional one is rejected rather than rounded.
+  /// A `null` reads as absent unless [nullable] is false. Errors carry the
+  /// field name and the offending number but never [json], so cipher-bearing
+  /// payloads can use this reader.
+  static int? optionalSafeInteger(
+    Map<String, dynamic> json,
+    String field, {
+    int? minimum,
+    bool nullable = true,
+  }) {
+    if (!json.containsKey(field)) return null;
+    final value = json[field];
+    if (value == null) {
+      if (nullable) return null;
+      throw AGUIValidationError(
+          message: 'Field must not be null', field: field);
+    }
+    if (value is! num || value.isNaN || value.isInfinite || value % 1 != 0) {
+      throw AGUIValidationError(
+        message: 'Field must be an integer, got ${value.runtimeType}',
+        field: field,
+        value: value is num ? value : value.runtimeType.toString(),
+      );
+    }
+    if (value > maxSafeInteger || value < -maxSafeInteger) {
+      throw AGUIValidationError(
+        message: 'Field is outside the safe integer range (±2^53 - 1)',
+        field: field,
+        value: value,
+      );
+    }
+    if (minimum != null && value < minimum) {
+      throw AGUIValidationError(
+        message: 'Field must be at least $minimum',
+        field: field,
+        value: value,
+      );
+    }
+    return value.toInt();
+  }
+
+  /// Reads an optional field that protocol 1.0 introduced, where an explicit
+  /// `null` is malformed rather than absent: no producer that predates 1.0
+  /// writes the field, so nothing older needs the tolerance. Errors carry
+  /// the field name but never [json].
+  static T? optionalStrictField<T>(Map<String, dynamic> json, String field) {
+    if (!json.containsKey(field)) return null;
+    final value = json[field];
+    if (value is T && value != null) return value;
+    throw AGUIValidationError(
+      message:
+          'Field has incorrect type. Expected $T, got ${value.runtimeType}',
+      field: field,
+    );
+  }
+
+  /// Decodes a required list of JSON objects with [decode], naming the
+  /// failing index in the error. Errors never carry [json].
+  static List<T> requireObjectList<T>(
+    Map<String, dynamic> json,
+    String field,
+    T Function(Map<String, dynamic>) decode,
+  ) {
+    final raw = requireField<List<dynamic>>(json, field);
+    final out = <T>[];
+    for (var i = 0; i < raw.length; i++) {
+      final item = raw[i];
+      if (item is! Map<String, dynamic>) {
+        throw AGUIValidationError(
+          message: 'List item must be an object, got ${item.runtimeType}',
+          field: '$field[$i]',
+        );
+      }
+      try {
+        out.add(decode(item));
+      } on AGUIValidationError catch (e) {
+        throw AGUIValidationError(
+          message: e.message,
+          field: e.field == null ? '$field[$i]' : '$field[$i].${e.field}',
+          value: e.value,
+        );
+      }
+    }
+    return out;
+  }
+
+  /// [requireObjectList] for an optional field that protocol 1.0 introduced:
+  /// absent reads as `null`, and a `null` is rejected unless [nullable].
+  static List<T>? optionalObjectList<T>(
+    Map<String, dynamic> json,
+    String field,
+    T Function(Map<String, dynamic>) decode, {
+    bool nullable = false,
+  }) {
+    if (!json.containsKey(field)) return null;
+    if (json[field] == null) {
+      if (nullable) return null;
+      throw AGUIValidationError(
+          message: 'Field must not be null', field: field);
+    }
+    return requireObjectList(json, field, decode);
+  }
+
+  /// Reads an optional `metadata` object: open by key, never interpreted.
+  ///
+  /// `metadata` is new in protocol 1.0, so no older producer writes a `null`
+  /// one, and the specification rejects it; so does this reader. Errors
+  /// never carry [json].
+  static Map<String, dynamic>? optionalMetadata(
+    Map<String, dynamic> json,
+    String field,
+  ) {
+    if (!json.containsKey(field)) return null;
+    final value = json[field];
+    if (value is Map<String, dynamic>) return value;
+    throw AGUIValidationError(
+      message: 'Field must be a JSON object, got ${value.runtimeType}',
+      field: field,
+    );
+  }
+
+  /// Reads a required JSON Patch (RFC 6902) and checks each operation's
+  /// shape: a known `op`, a JSON Pointer `path`, a `from` pointer for `move`
+  /// and `copy`, and a `value` for `add`, `replace` and `test`. The values
+  /// themselves are not inspected.
+  static List<Map<String, dynamic>> requireJsonPatch(
+    Map<String, dynamic> json,
+    String field,
+  ) {
+    final ops = requireListField<Map<String, dynamic>>(json, field);
+    for (var i = 0; i < ops.length; i++) {
+      final op = ops[i];
+      final name = op['op'];
+      Never fail(String message) => throw AGUIValidationError(
+            message: message,
+            field: '$field[$i]',
+            value: name,
+            json: json,
+          );
+      if (name is! String || !_patchOps.contains(name)) {
+        fail('Unknown JSON Patch operation');
+      }
+      if (!_isJsonPointer(op['path'])) {
+        fail('JSON Patch operation needs a JSON Pointer "path"');
+      }
+      if ((name == 'move' || name == 'copy') && !_isJsonPointer(op['from'])) {
+        fail('JSON Patch "$name" needs a JSON Pointer "from"');
+      }
+      if ((name == 'add' || name == 'replace' || name == 'test') &&
+          !op.containsKey('value')) {
+        fail('JSON Patch "$name" needs a "value"');
+      }
+    }
+    return ops;
+  }
+
+  static const _patchOps = {'add', 'remove', 'replace', 'move', 'copy', 'test'};
+
+  static final _jsonPointer = RegExp(r'^(/([^/~]|~[01])*)*$');
+
+  static bool _isJsonPointer(Object? value) =>
+      value is String && _jsonPointer.hasMatch(value);
+
   /// Safely extracts a list field from JSON.
   ///
   /// Use this when the elements have a concrete element type that the SDK

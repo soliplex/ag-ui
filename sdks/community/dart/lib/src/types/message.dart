@@ -116,12 +116,20 @@ sealed class Message extends AGUIModel with TypeDiscriminator {
   /// spelling.
   final String? encryptedValue;
 
+  /// Open, application-defined data about this message. Never interpreted.
+  final Map<String, dynamic>? metadata;
+
+  /// The subagent run that produced this message, when one did.
+  final String? subagentRunId;
+
   const Message({
     this.id,
     required this.role,
     this.content,
     this.name,
     this.encryptedValue,
+    this.metadata,
+    this.subagentRunId,
   });
 
   @override
@@ -181,8 +189,31 @@ sealed class Message extends AGUIModel with TypeDiscriminator {
         if (content != null) 'content': content,
         if (name != null) 'name': name,
         if (encryptedValue != null) 'encryptedValue': encryptedValue,
+        ..._attribution(this),
       };
 }
+
+/// The `metadata` and `subagentRunId` every message can carry, in wire form.
+Map<String, dynamic> _attribution(Message m) => {
+      if (m.metadata != null) 'metadata': m.metadata,
+      if (m.subagentRunId != null) 'subagentRunId': m.subagentRunId,
+    };
+
+/// Reads `metadata`; a `null` one is rejected, as for events.
+Map<String, dynamic>? _readMetadata(Map<String, dynamic> json) =>
+    JsonDecoder.optionalMetadata(json, 'metadata');
+
+/// Reads `subagentRunId` (or `subagent_run_id`); a `null` reads as absent.
+String? _readSubagentRunId(Map<String, dynamic> json) =>
+    JsonDecoder.optionalEitherField<String>(
+      json,
+      'subagentRunId',
+      'subagent_run_id',
+    );
+
+/// Resolves a `copyWith` argument: [kUnsetSentinel] keeps [current].
+T _pick<T>(Object? value, T current) =>
+    identical(value, kUnsetSentinel) ? current : value as T;
 
 /// Developer message with required content.
 ///
@@ -196,6 +227,8 @@ final class DeveloperMessage extends Message {
     required this.content,
     super.name,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.developer);
 
   factory DeveloperMessage.fromJson(Map<String, dynamic> json) {
@@ -208,6 +241,8 @@ final class DeveloperMessage extends Message {
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
@@ -222,6 +257,7 @@ final class DeveloperMessage extends Message {
         'content': content,
         if (name != null) 'name': name,
         if (encryptedValue != null) 'encryptedValue': encryptedValue,
+        ..._attribution(this),
       };
 
   // `name` and `encryptedValue` are nullable on the parent — use the
@@ -232,6 +268,8 @@ final class DeveloperMessage extends Message {
     String? content,
     Object? name = kUnsetSentinel,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     return DeveloperMessage(
       id: id ?? this.id,
@@ -240,6 +278,8 @@ final class DeveloperMessage extends Message {
       encryptedValue: identical(encryptedValue, kUnsetSentinel)
           ? this.encryptedValue
           : encryptedValue as String?,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
@@ -256,6 +296,8 @@ final class SystemMessage extends Message {
     required this.content,
     super.name,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.system);
 
   factory SystemMessage.fromJson(Map<String, dynamic> json) {
@@ -268,6 +310,8 @@ final class SystemMessage extends Message {
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
@@ -278,6 +322,7 @@ final class SystemMessage extends Message {
         'content': content,
         if (name != null) 'name': name,
         if (encryptedValue != null) 'encryptedValue': encryptedValue,
+        ..._attribution(this),
       };
 
   // `name` and `encryptedValue` are nullable on the parent — sentinel
@@ -288,6 +333,8 @@ final class SystemMessage extends Message {
     String? content,
     Object? name = kUnsetSentinel,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     return SystemMessage(
       id: id ?? this.id,
@@ -296,6 +343,8 @@ final class SystemMessage extends Message {
       encryptedValue: identical(encryptedValue, kUnsetSentinel)
           ? this.encryptedValue
           : encryptedValue as String?,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
@@ -313,6 +362,8 @@ final class AssistantMessage extends Message {
     super.name,
     this.toolCalls,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.assistant);
 
   factory AssistantMessage.fromJson(Map<String, dynamic> json) {
@@ -356,7 +407,9 @@ final class AssistantMessage extends Message {
                     // (cipher-aware path) so the stack trace survives.
                     throw AGUIValidationError(
                       message: e.message,
-                      field: e.field != null ? 'toolCalls[$i].${e.field}' : 'toolCalls[$i]',
+                      field: e.field != null
+                          ? 'toolCalls[$i].${e.field}'
+                          : 'toolCalls[$i]',
                       value: e.value,
                       cause: e.json == null ? e : null,
                     );
@@ -375,6 +428,8 @@ final class AssistantMessage extends Message {
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
@@ -402,6 +457,8 @@ final class AssistantMessage extends Message {
     Object? name = kUnsetSentinel,
     Object? toolCalls = kUnsetSentinel,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     return AssistantMessage(
       id: id ?? this.id,
@@ -415,6 +472,8 @@ final class AssistantMessage extends Message {
       encryptedValue: identical(encryptedValue, kUnsetSentinel)
           ? this.encryptedValue
           : encryptedValue as String?,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
@@ -423,11 +482,11 @@ final class AssistantMessage extends Message {
 ///
 /// Represents input from the user in the conversation. The content is a union
 /// of plain text or an ordered list of multimodal parts, modeled by
-/// [UserMessageContent]. Use the default constructor for text, or
-/// [UserMessage.multimodal] for a list of [InputContent] parts.
+/// [MessageContent]. Use the default constructor for text, or
+/// [UserMessage.multimodal] for a list of [ContentPart] parts.
 class UserMessage extends Message {
   /// The user message content: [TextContent] or [MultimodalContent].
-  final UserMessageContent messageContent;
+  final MessageContent messageContent;
 
   /// Creates a text user message; [content] is wrapped in [TextContent].
   ///
@@ -438,36 +497,44 @@ class UserMessage extends Message {
     required String content,
     super.name,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   })  : messageContent = TextContent(content),
         super(role: MessageRole.user);
 
   /// Creates a multimodal user message from an ordered list of [parts].
   UserMessage.multimodal({
     required super.id,
-    required List<InputContent> parts,
+    required List<ContentPart> parts,
     super.name,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   })  : messageContent = MultimodalContent(parts),
         super(role: MessageRole.user);
 
-  /// Creates a user message from a [UserMessageContent] union value.
+  /// Creates a user message from a [MessageContent] union value.
   const UserMessage.fromContent({
     required super.id,
     required this.messageContent,
     super.name,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.user);
 
   factory UserMessage.fromJson(Map<String, dynamic> json) {
     return UserMessage.fromContent(
       id: JsonDecoder.requireField<String>(json, 'id'),
-      messageContent: UserMessageContent.fromJson(json['content']),
+      messageContent: MessageContent.fromJson(json['content']),
       name: JsonDecoder.optionalField<String>(json, 'name'),
       encryptedValue: JsonDecoder.optionalEitherField<String>(
         json,
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
@@ -487,6 +554,7 @@ class UserMessage extends Message {
         'content': messageContent.toJson(),
         if (name != null) 'name': name,
         if (encryptedValue != null) 'encryptedValue': encryptedValue,
+        ..._attribution(this),
       };
 
   // `name` and `encryptedValue` are nullable on the parent — sentinel
@@ -494,9 +562,11 @@ class UserMessage extends Message {
   @override
   UserMessage copyWith({
     String? id,
-    UserMessageContent? messageContent,
+    MessageContent? messageContent,
     Object? name = kUnsetSentinel,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     return UserMessage.fromContent(
       id: id ?? this.id,
@@ -505,6 +575,8 @@ class UserMessage extends Message {
       encryptedValue: identical(encryptedValue, kUnsetSentinel)
           ? this.encryptedValue
           : encryptedValue as String?,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
@@ -512,28 +584,44 @@ class UserMessage extends Message {
 /// Tool message with tool call result.
 ///
 /// Contains the result of a tool execution, linked to a specific tool call
-/// via the [toolCallId] field. The optional [encryptedValue] mirrors the
-/// canonical TypeScript `ToolMessageSchema` and Python `ToolMessage` and
-/// carries an opaque cipher payload that a Dart proxy must forward
-/// verbatim to a downstream agent.
+/// via the [toolCallId] field. Since protocol 1.0 the result is text or an
+/// ordered list of [ContentPart]s, modeled by [messageContent]; [content]
+/// projects it to text. The optional [encryptedValue] carries an opaque
+/// cipher payload that a Dart proxy must forward verbatim to a downstream
+/// agent.
 final class ToolMessage extends Message {
-  @override
-  final String content;
+  /// The result: [TextContent] or [MultimodalContent].
+  final MessageContent messageContent;
   final String toolCallId;
   final String? error;
 
-  const ToolMessage({
+  /// Creates a tool message whose result is text.
+  ToolMessage({
     required super.id,
-    required this.content,
+    required String content,
     required this.toolCallId,
     this.error,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
+  })  : messageContent = TextContent(content),
+        super(role: MessageRole.tool);
+
+  /// Creates a tool message from a [MessageContent] value.
+  const ToolMessage.fromContent({
+    required super.id,
+    required this.messageContent,
+    required this.toolCallId,
+    this.error,
+    super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.tool);
 
   factory ToolMessage.fromJson(Map<String, dynamic> json) {
-    return ToolMessage(
+    return ToolMessage.fromContent(
       id: JsonDecoder.requireField<String>(json, 'id'),
-      content: JsonDecoder.requireField<String>(json, 'content'),
+      messageContent: MessageContent.fromJson(json['content']),
       toolCallId: JsonDecoder.requireEitherField<String>(
         json,
         'toolCallId',
@@ -545,44 +633,47 @@ final class ToolMessage extends Message {
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
-  // Explicit field-by-field emission rather than ...super.toJson() spread:
-  // ToolMessage's constructor does not accept `name`, so the inherited
-  // Message.name field is always null here and the explicit form is safe.
-  // If Message.toJson() ever gains a new common field, this override must be
-  // updated in parallel to avoid silently dropping it.
+  /// The result as text; for a list of parts, its text parts joined.
+  /// See [MessageContent.text].
+  @override
+  String get content => messageContent.text;
+
+  // ToolMessage's constructors do not accept `name`, so the inherited
+  // Message.name is always null and is not emitted.
   @override
   Map<String, dynamic> toJson() => {
         if (id != null) 'id': id,
         'role': role.value,
-        'content': content,
+        'content': messageContent.toJson(),
         if (encryptedValue != null) 'encryptedValue': encryptedValue,
         'toolCallId': toolCallId,
         if (error != null) 'error': error,
+        ..._attribution(this),
       };
 
-  // `error` and `encryptedValue` are nullable — use the sentinel so a
-  // caller can explicitly clear either via `copyWith(error: null)` /
-  // `copyWith(encryptedValue: null)`. Mirrors the event-class sentinel
-  // discipline.
   @override
   ToolMessage copyWith({
     String? id,
-    String? content,
+    MessageContent? messageContent,
     String? toolCallId,
     Object? error = kUnsetSentinel,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
-    return ToolMessage(
+    return ToolMessage.fromContent(
       id: id ?? this.id,
-      content: content ?? this.content,
+      messageContent: messageContent ?? this.messageContent,
       toolCallId: toolCallId ?? this.toolCallId,
-      error: identical(error, kUnsetSentinel) ? this.error : error as String?,
-      encryptedValue: identical(encryptedValue, kUnsetSentinel)
-          ? this.encryptedValue
-          : encryptedValue as String?,
+      error: _pick(error, this.error),
+      encryptedValue: _pick(encryptedValue, this.encryptedValue),
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
@@ -617,6 +708,8 @@ final class ActivityMessage extends Message {
     required super.id,
     required this.activityType,
     required this.activityContent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.activity);
 
   // ActivityMessage never carries cipher data — override the inherited getter
@@ -642,6 +735,8 @@ final class ActivityMessage extends Message {
       ),
       activityContent:
           JsonDecoder.requireField<Map<String, dynamic>>(json, 'content'),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
@@ -655,6 +750,7 @@ final class ActivityMessage extends Message {
         'role': role.value,
         'activityType': activityType,
         'content': activityContent,
+        ..._attribution(this),
       };
 
   // `id` is nullable on the parent `Message` — use the sentinel so a caller
@@ -665,11 +761,15 @@ final class ActivityMessage extends Message {
     Object? id = kUnsetSentinel,
     String? activityType,
     Map<String, dynamic>? activityContent,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     return ActivityMessage(
       id: identical(id, kUnsetSentinel) ? this.id : id as String?,
       activityType: activityType ?? this.activityType,
       activityContent: activityContent ?? this.activityContent,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
@@ -693,6 +793,8 @@ class ReasoningMessage extends Message {
     this.content,
     this.thinking,
     super.encryptedValue,
+    super.metadata,
+    super.subagentRunId,
   }) : super(role: MessageRole.reasoning);
 
   factory ReasoningMessage.fromJson(Map<String, dynamic> json) {
@@ -705,6 +807,8 @@ class ReasoningMessage extends Message {
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
     );
   }
 
@@ -721,6 +825,8 @@ class ReasoningMessage extends Message {
     String? content,
     String? thinking,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     return ReasoningMessage(
       id: id ?? this.id,
@@ -729,36 +835,41 @@ class ReasoningMessage extends Message {
       encryptedValue: identical(encryptedValue, kUnsetSentinel)
           ? this.encryptedValue
           : encryptedValue as String?,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
     );
   }
 }
 
 /// Reads a MIME type from JSON, accepting both `mimeType` and `mime_type`.
 String? _readMimeType(Map<String, dynamic> json) =>
-    JsonDecoder.optionalField<String>(json, 'mimeType') ??
-    JsonDecoder.optionalField<String>(json, 'mime_type');
+    JsonDecoder.optionalEitherField<String>(json, 'mimeType', 'mime_type');
 
-/// The source of a multimodal [InputContent] part.
+/// Where a media [ContentPart]'s bytes are.
 ///
-/// A discriminated union on `type`: [DataSource] (inline data, e.g. base64)
-/// or [UrlSource] (a remote URL). Use [InputContentSource.fromJson] to decode.
-sealed class InputContentSource extends AGUIModel {
-  const InputContentSource();
+/// A discriminated union on `type`: [DataSource] (inline data, e.g. base64),
+/// [UrlSource] (a remote URL), or [FileSource] (a handle a model provider
+/// issued for bytes already uploaded to it). Use [PartSource.fromJson] to
+/// decode.
+sealed class PartSource extends AGUIModel {
+  const PartSource();
 
-  /// The source discriminator: `data` or `url`.
+  /// The source discriminator: `data`, `url` or `file`.
   String get sourceType;
 
-  /// Decodes an [InputContentSource] from JSON, dispatching on `type`.
-  factory InputContentSource.fromJson(Map<String, dynamic> json) {
+  /// Decodes a [PartSource] from JSON, dispatching on `type`.
+  factory PartSource.fromJson(Map<String, dynamic> json) {
     final type = JsonDecoder.requireField<String>(json, 'type');
     switch (type) {
       case 'data':
         return DataSource.fromJson(json);
       case 'url':
         return UrlSource.fromJson(json);
+      case 'file':
+        return FileSource.fromJson(json);
       default:
         throw AGUIValidationError(
-          message: 'Invalid input content source type: $type',
+          message: 'Invalid part source type: $type',
           field: 'type',
           value: type,
           json: json,
@@ -767,10 +878,14 @@ sealed class InputContentSource extends AGUIModel {
   }
 }
 
+/// The 0.x name of [PartSource].
+@Deprecated('Use PartSource. Renamed in protocol 1.0.')
+typedef InputContentSource = PartSource;
+
 /// Inline content source carrying a data payload (e.g. base64-encoded bytes).
 ///
 /// [mimeType] is required for data sources.
-class DataSource extends InputContentSource {
+class DataSource extends PartSource {
   /// The inline data payload, typically base64-encoded.
   final String value;
 
@@ -814,7 +929,7 @@ class DataSource extends InputContentSource {
 /// Remote content source referenced by URL.
 ///
 /// [mimeType] is optional for URL sources.
-class UrlSource extends InputContentSource {
+class UrlSource extends PartSource {
   /// The URL of the content.
   final String value;
 
@@ -839,356 +954,341 @@ class UrlSource extends InputContentSource {
       };
 
   @override
-  UrlSource copyWith({String? value, Object? mimeType = _absent}) => UrlSource(
+  UrlSource copyWith({String? value, Object? mimeType = kUnsetSentinel}) =>
+      UrlSource(
         value: value ?? this.value,
-        mimeType: identical(mimeType, _absent) ? this.mimeType : mimeType as String?,
+        mimeType: _pick(mimeType, this.mimeType),
       );
 }
 
-/// Parses the shared `source` (+ optional `metadata`) of a media input part.
-({InputContentSource source, Object? metadata}) _parseMediaPart(
-  Map<String, dynamic> json,
-  String type,
-) {
-  final rawSource = json['source'];
-  if (rawSource is! Map<String, dynamic>) {
-    throw AGUIValidationError(
-      message: '$type input content requires a source object',
-      field: 'source',
-      value: rawSource,
-      json: json,
-    );
-  }
-  return (
-    source: InputContentSource.fromJson(rawSource),
-    metadata: json['metadata'] as Object?,
-  );
+/// A handle a model provider issued for bytes already uploaded to it.
+///
+/// [value] is that handle (for example an OpenAI file id), never a URL: an
+/// agent that cannot hand it to [provider] should skip the part with a
+/// warning, as for any part the model cannot take.
+class FileSource extends PartSource {
+  /// The provider's handle for the uploaded bytes.
+  final String value;
+
+  /// The provider that issued [value], when the producer named one.
+  final String? provider;
+
+  /// The MIME type of the uploaded bytes, when known.
+  final String? mimeType;
+
+  const FileSource({required this.value, this.provider, this.mimeType});
+
+  @override
+  String get sourceType => 'file';
+
+  factory FileSource.fromJson(Map<String, dynamic> json) => FileSource(
+        value: JsonDecoder.requireField<String>(json, 'value'),
+        provider: JsonDecoder.optionalField<String>(json, 'provider'),
+        mimeType: _readMimeType(json),
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': sourceType,
+        'value': value,
+        if (provider != null) 'provider': provider,
+        if (mimeType != null) 'mimeType': mimeType,
+      };
+
+  @override
+  FileSource copyWith({
+    String? value,
+    Object? provider = kUnsetSentinel,
+    Object? mimeType = kUnsetSentinel,
+  }) =>
+      FileSource(
+        value: value ?? this.value,
+        provider: _pick(provider, this.provider),
+        mimeType: _pick(mimeType, this.mimeType),
+      );
 }
 
-/// Serializes the shared shape of a media input part.
-Map<String, dynamic> _mediaToJson(
-  String type,
-  InputContentSource source,
-  Object? metadata,
-) => {
-      'type': type,
-      'source': source.toJson(),
-      if (metadata != null) 'metadata': metadata,
-    };
-
-/// Sentinel value used in [copyWith] methods to distinguish "not provided"
-/// from `null`, allowing callers to clear optional fields by passing `null`.
-const _absent = Object();
-
-/// A single typed part of a multimodal [UserMessage].
+/// One typed part of a message's content.
 ///
-/// A discriminated union on `type`: [TextInputContent], [ImageInputContent],
-/// [AudioInputContent], [VideoInputContent], [DocumentInputContent], or the
-/// legacy [BinaryInputContent]. Use [InputContent.fromJson] to decode.
-sealed class InputContent extends AGUIModel with TypeDiscriminator {
-  const InputContent();
+/// A discriminated union on `type`: [TextPart], [ImagePart], [AudioPart],
+/// [VideoPart] or [DocumentPart]. Every part has an optional [id] and
+/// optional free-form [metadata]. Use [ContentPart.fromJson] to decode.
+///
+/// The 0.x `binary` part is gone: protocol 1.0 rejects it, and so does
+/// [ContentPart.fromJson]. Send a media part with a [PartSource] instead.
+sealed class ContentPart extends AGUIModel with TypeDiscriminator {
+  /// An identifier for this part, unique within its message.
+  final String? id;
 
-  /// Decodes an [InputContent] from JSON, dispatching on `type`.
-  factory InputContent.fromJson(Map<String, dynamic> json) {
+  /// Free-form, provider-specific metadata. Serialized only when non-null.
+  final Object? metadata;
+
+  const ContentPart({this.id, this.metadata});
+
+  /// Decodes a [ContentPart] from JSON, dispatching on `type`.
+  factory ContentPart.fromJson(Map<String, dynamic> json) {
     final type = JsonDecoder.requireField<String>(json, 'type');
     switch (type) {
       case 'text':
-        return TextInputContent.fromJson(json);
+        return TextPart.fromJson(json);
       case 'image':
-        return ImageInputContent.fromJson(json);
+        return ImagePart.fromJson(json);
       case 'audio':
-        return AudioInputContent.fromJson(json);
+        return AudioPart.fromJson(json);
       case 'video':
-        return VideoInputContent.fromJson(json);
+        return VideoPart.fromJson(json);
       case 'document':
-        return DocumentInputContent.fromJson(json);
-      case 'binary':
-        return BinaryInputContent.fromJson(json);
+        return DocumentPart.fromJson(json);
       default:
         throw AGUIValidationError(
-          message: 'Invalid input content type: $type',
+          message: 'Invalid content part type: $type',
           field: 'type',
           value: type,
           json: json,
         );
     }
   }
+
+  /// The wire fields every part shares, after `type`.
+  Map<String, dynamic> _common() => {
+        if (id != null) 'id': id,
+        if (metadata != null) 'metadata': metadata,
+      };
 }
 
-/// Plain text part of a multimodal message.
-class TextInputContent extends InputContent {
+/// The 0.x name of [ContentPart].
+@Deprecated('Use ContentPart. Renamed in protocol 1.0.')
+typedef InputContent = ContentPart;
+
+/// Plain text part of a message's content.
+class TextPart extends ContentPart {
   /// The text payload.
   final String text;
 
-  const TextInputContent(this.text);
+  const TextPart(this.text, {super.id, super.metadata});
 
   @override
   String get type => 'text';
 
-  factory TextInputContent.fromJson(Map<String, dynamic> json) =>
-      TextInputContent(JsonDecoder.requireField<String>(json, 'text'));
+  factory TextPart.fromJson(Map<String, dynamic> json) => TextPart(
+        JsonDecoder.requireField<String>(json, 'text'),
+        id: JsonDecoder.optionalField<String>(json, 'id'),
+        metadata: json['metadata'],
+      );
 
   @override
-  Map<String, dynamic> toJson() => {'type': type, 'text': text};
+  Map<String, dynamic> toJson() => {'type': type, 'text': text, ..._common()};
 
   @override
-  TextInputContent copyWith({String? text}) =>
-      TextInputContent(text ?? this.text);
-}
-
-/// Image part of a multimodal message.
-class ImageInputContent extends InputContent {
-  /// The image source (data or URL).
-  final InputContentSource source;
-
-  /// Free-form, provider-specific metadata. Serialized only when non-null.
-  final Object? metadata;
-
-  const ImageInputContent({required this.source, this.metadata});
-
-  @override
-  String get type => 'image';
-
-  factory ImageInputContent.fromJson(Map<String, dynamic> json) {
-    final parsed = _parseMediaPart(json, 'image');
-    return ImageInputContent(source: parsed.source, metadata: parsed.metadata);
-  }
-
-  @override
-  Map<String, dynamic> toJson() => _mediaToJson(type, source, metadata);
-
-  @override
-  ImageInputContent copyWith({
-    InputContentSource? source,
-    Object? metadata = _absent,
+  TextPart copyWith({
+    String? text,
+    Object? id = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
   }) =>
-      ImageInputContent(
-        source: source ?? this.source,
-        metadata: identical(metadata, _absent) ? this.metadata : metadata,
+      TextPart(
+        text ?? this.text,
+        id: _pick(id, this.id),
+        metadata: _pick(metadata, this.metadata),
       );
 }
 
-/// Audio part of a multimodal message.
-class AudioInputContent extends InputContent {
-  /// The audio source (data or URL).
-  final InputContentSource source;
+/// The 0.x name of [TextPart].
+@Deprecated('Use TextPart. Renamed in protocol 1.0.')
+typedef TextInputContent = TextPart;
 
-  /// Free-form, provider-specific metadata. Serialized only when non-null.
-  final Object? metadata;
+/// A media part: an image, audio clip, video or document, by [source].
+sealed class MediaPart extends ContentPart {
+  /// Where the part's bytes are.
+  final PartSource source;
 
-  const AudioInputContent({required this.source, this.metadata});
-
-  @override
-  String get type => 'audio';
-
-  factory AudioInputContent.fromJson(Map<String, dynamic> json) {
-    final parsed = _parseMediaPart(json, 'audio');
-    return AudioInputContent(source: parsed.source, metadata: parsed.metadata);
-  }
-
-  @override
-  Map<String, dynamic> toJson() => _mediaToJson(type, source, metadata);
-
-  @override
-  AudioInputContent copyWith({
-    InputContentSource? source,
-    Object? metadata = _absent,
-  }) =>
-      AudioInputContent(
-        source: source ?? this.source,
-        metadata: identical(metadata, _absent) ? this.metadata : metadata,
-      );
-}
-
-/// Video part of a multimodal message.
-class VideoInputContent extends InputContent {
-  /// The video source (data or URL).
-  final InputContentSource source;
-
-  /// Free-form, provider-specific metadata. Serialized only when non-null.
-  final Object? metadata;
-
-  const VideoInputContent({required this.source, this.metadata});
-
-  @override
-  String get type => 'video';
-
-  factory VideoInputContent.fromJson(Map<String, dynamic> json) {
-    final parsed = _parseMediaPart(json, 'video');
-    return VideoInputContent(source: parsed.source, metadata: parsed.metadata);
-  }
-
-  @override
-  Map<String, dynamic> toJson() => _mediaToJson(type, source, metadata);
-
-  @override
-  VideoInputContent copyWith({
-    InputContentSource? source,
-    Object? metadata = _absent,
-  }) =>
-      VideoInputContent(
-        source: source ?? this.source,
-        metadata: identical(metadata, _absent) ? this.metadata : metadata,
-      );
-}
-
-/// Document part of a multimodal message.
-class DocumentInputContent extends InputContent {
-  /// The document source (data or URL).
-  final InputContentSource source;
-
-  /// Free-form, provider-specific metadata. Serialized only when non-null.
-  final Object? metadata;
-
-  const DocumentInputContent({required this.source, this.metadata});
-
-  @override
-  String get type => 'document';
-
-  factory DocumentInputContent.fromJson(Map<String, dynamic> json) {
-    final parsed = _parseMediaPart(json, 'document');
-    return DocumentInputContent(
-      source: parsed.source,
-      metadata: parsed.metadata,
-    );
-  }
-
-  @override
-  Map<String, dynamic> toJson() => _mediaToJson(type, source, metadata);
-
-  @override
-  DocumentInputContent copyWith({
-    InputContentSource? source,
-    Object? metadata = _absent,
-  }) =>
-      DocumentInputContent(
-        source: source ?? this.source,
-        metadata: identical(metadata, _absent) ? this.metadata : metadata,
-      );
-}
-
-/// Legacy binary content part.
-///
-/// Requires a non-empty [mimeType] and at least one of [id], [url], or [data].
-class BinaryInputContent extends InputContent {
-  /// The MIME type of the binary payload. Required and non-empty.
-  final String mimeType;
-
-  /// An opaque identifier for previously-uploaded content.
-  final String? id;
-
-  /// A URL referencing the content.
-  final String? url;
-
-  /// An inline data payload (e.g. base64-encoded).
-  final String? data;
-
-  /// An optional display filename.
-  final String? filename;
-
-  const BinaryInputContent({
-    required this.mimeType,
-    this.id,
-    this.url,
-    this.data,
-    this.filename,
-  })  : assert(mimeType != '', 'BinaryInputContent requires a non-empty mimeType'),
-        assert(
-          id != null || url != null || data != null,
-          'BinaryInputContent requires at least one of id, url, or data',
-        );
-
-  @override
-  String get type => 'binary';
-
-  factory BinaryInputContent.fromJson(Map<String, dynamic> json) {
-    final mimeType = _readMimeType(json);
-    // Non-empty mimeType matches the Go reader (types.go:423, enforced on
-    // unmarshal); intentionally stricter than TS, whose z.string() accepts "".
-    if (mimeType == null || mimeType.isEmpty) {
-      throw AGUIValidationError(
-        message: 'BinaryInputContent requires a non-empty mimeType',
-        field: 'mimeType',
-        json: json,
-      );
-    }
-    final id = JsonDecoder.optionalField<String>(json, 'id');
-    final url = JsonDecoder.optionalField<String>(json, 'url');
-    final data = JsonDecoder.optionalField<String>(json, 'data');
-    if (id == null && url == null && data == null) {
-      throw AGUIValidationError(
-        message: 'BinaryInputContent requires at least one of id, url, or data',
-        field: 'id',
-        json: json,
-      );
-    }
-    return BinaryInputContent(
-      mimeType: mimeType,
-      id: id,
-      url: url,
-      data: data,
-      filename: JsonDecoder.optionalField<String>(json, 'filename'),
-    );
-  }
+  const MediaPart({required this.source, super.id, super.metadata});
 
   @override
   Map<String, dynamic> toJson() => {
         'type': type,
-        'mimeType': mimeType,
-        if (id != null) 'id': id,
-        if (url != null) 'url': url,
-        if (data != null) 'data': data,
-        if (filename != null) 'filename': filename,
+        'source': source.toJson(),
+        ..._common(),
       };
+}
+
+/// Parses the fields every media part shares.
+({PartSource source, String? id, Object? metadata}) _parseMediaPart(
+  Map<String, dynamic> json,
+  String type,
+) {
+  final rawSource = json['source'];
+  if (rawSource is! Map<String, dynamic>) {
+    throw AGUIValidationError(
+      message: '$type part requires a source object',
+      field: 'source',
+      value: rawSource,
+      json: json,
+    );
+  }
+  return (
+    source: PartSource.fromJson(rawSource),
+    id: JsonDecoder.optionalField<String>(json, 'id'),
+    metadata: json['metadata'],
+  );
+}
+
+/// Image part of a message's content.
+class ImagePart extends MediaPart {
+  const ImagePart({required super.source, super.id, super.metadata});
 
   @override
-  BinaryInputContent copyWith({
-    String? mimeType,
-    Object? id = _absent,
-    Object? url = _absent,
-    Object? data = _absent,
-    Object? filename = _absent,
+  String get type => 'image';
+
+  factory ImagePart.fromJson(Map<String, dynamic> json) {
+    final p = _parseMediaPart(json, 'image');
+    return ImagePart(source: p.source, id: p.id, metadata: p.metadata);
+  }
+
+  @override
+  ImagePart copyWith({
+    PartSource? source,
+    Object? id = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
   }) =>
-      BinaryInputContent(
-        mimeType: mimeType ?? this.mimeType,
-        id: identical(id, _absent) ? this.id : id as String?,
-        url: identical(url, _absent) ? this.url : url as String?,
-        data: identical(data, _absent) ? this.data : data as String?,
-        filename: identical(filename, _absent) ? this.filename : filename as String?,
+      ImagePart(
+        source: source ?? this.source,
+        id: _pick(id, this.id),
+        metadata: _pick(metadata, this.metadata),
       );
 }
 
-/// The content union for a [UserMessage]: plain text or multimodal parts.
+/// The 0.x name of [ImagePart].
+@Deprecated('Use ImagePart. Renamed in protocol 1.0.')
+typedef ImageInputContent = ImagePart;
+
+/// Audio part of a message's content.
+class AudioPart extends MediaPart {
+  const AudioPart({required super.source, super.id, super.metadata});
+
+  @override
+  String get type => 'audio';
+
+  factory AudioPart.fromJson(Map<String, dynamic> json) {
+    final p = _parseMediaPart(json, 'audio');
+    return AudioPart(source: p.source, id: p.id, metadata: p.metadata);
+  }
+
+  @override
+  AudioPart copyWith({
+    PartSource? source,
+    Object? id = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+  }) =>
+      AudioPart(
+        source: source ?? this.source,
+        id: _pick(id, this.id),
+        metadata: _pick(metadata, this.metadata),
+      );
+}
+
+/// The 0.x name of [AudioPart].
+@Deprecated('Use AudioPart. Renamed in protocol 1.0.')
+typedef AudioInputContent = AudioPart;
+
+/// Video part of a message's content.
+class VideoPart extends MediaPart {
+  const VideoPart({required super.source, super.id, super.metadata});
+
+  @override
+  String get type => 'video';
+
+  factory VideoPart.fromJson(Map<String, dynamic> json) {
+    final p = _parseMediaPart(json, 'video');
+    return VideoPart(source: p.source, id: p.id, metadata: p.metadata);
+  }
+
+  @override
+  VideoPart copyWith({
+    PartSource? source,
+    Object? id = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+  }) =>
+      VideoPart(
+        source: source ?? this.source,
+        id: _pick(id, this.id),
+        metadata: _pick(metadata, this.metadata),
+      );
+}
+
+/// The 0.x name of [VideoPart].
+@Deprecated('Use VideoPart. Renamed in protocol 1.0.')
+typedef VideoInputContent = VideoPart;
+
+/// Document part of a message's content.
+class DocumentPart extends MediaPart {
+  const DocumentPart({required super.source, super.id, super.metadata});
+
+  @override
+  String get type => 'document';
+
+  factory DocumentPart.fromJson(Map<String, dynamic> json) {
+    final p = _parseMediaPart(json, 'document');
+    return DocumentPart(source: p.source, id: p.id, metadata: p.metadata);
+  }
+
+  @override
+  DocumentPart copyWith({
+    PartSource? source,
+    Object? id = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
+  }) =>
+      DocumentPart(
+        source: source ?? this.source,
+        id: _pick(id, this.id),
+        metadata: _pick(metadata, this.metadata),
+      );
+}
+
+/// The 0.x name of [DocumentPart].
+@Deprecated('Use DocumentPart. Renamed in protocol 1.0.')
+typedef DocumentInputContent = DocumentPart;
+
+/// Message content: plain text or an ordered list of [ContentPart]s.
 ///
-/// Mirrors the canonical `string | InputContent[]` shape. [toJson] returns a
-/// `String` for [TextContent] or a `List` for [MultimodalContent].
+/// The wire's `string | ContentPart[]`, carried by [UserMessage],
+/// [ToolMessage] and `ToolCallResultEvent`. [toJson] returns a `String` for
+/// [TextContent] or a `List` for [MultimodalContent].
 ///
 /// Unlike the other models this does not extend `AGUIModel`: its [toJson] must
 /// return a bare `String` or `List`, not a `Map<String, dynamic>`.
-sealed class UserMessageContent {
-  const UserMessageContent();
+sealed class MessageContent {
+  const MessageContent();
 
-  /// Serializes to a JSON `String` (text) or `List` (multimodal parts).
+  /// Serializes to a JSON `String` (text) or `List` (parts).
   Object toJson();
 
+  /// The content as text: the string itself, or the text parts joined in
+  /// order with nothing between them. Media parts contribute nothing; check
+  /// [hasMedia] when that loss matters.
+  String get text;
+
+  /// Whether flattening to [text] drops anything: true when any part is a
+  /// media part.
+  bool get hasMedia;
+
   /// Decodes from a raw `content` value: a `String` or a `List` of parts.
-  factory UserMessageContent.fromJson(Object? raw) {
+  factory MessageContent.fromJson(Object? raw) {
     if (raw is String) {
       return TextContent(raw);
     }
     if (raw is List) {
-      final parts = <InputContent>[];
+      final parts = <ContentPart>[];
       for (var i = 0; i < raw.length; i++) {
         final item = raw[i];
         if (item is! Map<String, dynamic>) {
           throw AGUIValidationError(
-            message: 'UserMessage content part at index $i must be an object',
+            message: 'Content part at index $i must be an object',
             field: 'content[$i]',
             value: item,
           );
         }
         try {
-          parts.add(InputContent.fromJson(item));
+          parts.add(ContentPart.fromJson(item));
         } on AGUIValidationError catch (e) {
           throw AGUIValidationError(
             message: 'Invalid content part at index $i: ${e.message}',
@@ -1198,36 +1298,49 @@ sealed class UserMessageContent {
         }
       }
       // Decode is tolerant: an empty list is a structurally valid
-      // MultimodalContent (mirrors canonical TS `z.array`, which accepts []).
-      // The non-empty invariant is enforced on the send side by
-      // Validators.validateUserMessageContent.
+      // MultimodalContent (the schema's array has no minimum). The
+      // non-empty invariant for a user message is enforced on the send side
+      // by Validators.validateMessageContent.
       return MultimodalContent(parts);
     }
     throw AGUIValidationError(
-      message: 'UserMessage content must be a String or a List of parts',
+      message: 'Content must be a String or a List of parts',
       field: 'content',
       value: raw,
     );
   }
 }
 
-/// Plain-text user message content. Serializes to a JSON `String`.
-class TextContent extends UserMessageContent {
-  /// The text payload.
+/// The 0.x name of [MessageContent], from when only a user message had it.
+@Deprecated('Use MessageContent. Tool results share it since protocol 1.0.')
+typedef UserMessageContent = MessageContent;
+
+/// Plain-text message content. Serializes to a JSON `String`.
+class TextContent extends MessageContent {
+  @override
   final String text;
 
   const TextContent(this.text);
 
   @override
+  bool get hasMedia => false;
+
+  @override
   String toJson() => text;
 }
 
-/// Multimodal user message content. Serializes to a JSON `List`.
-class MultimodalContent extends UserMessageContent {
+/// Message content as an ordered list of parts. Serializes to a JSON `List`.
+class MultimodalContent extends MessageContent {
   /// The ordered list of content parts.
-  final List<InputContent> parts;
+  final List<ContentPart> parts;
 
   const MultimodalContent(this.parts);
+
+  @override
+  String get text => parts.whereType<TextPart>().map((p) => p.text).join();
+
+  @override
+  bool get hasMedia => parts.any((p) => p is MediaPart);
 
   @override
   List<Map<String, dynamic>> toJson() =>

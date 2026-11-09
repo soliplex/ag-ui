@@ -3,6 +3,7 @@ library;
 
 import 'base.dart';
 import 'message.dart';
+import 'run.dart';
 import 'tool.dart';
 
 // `kUnsetSentinel` (from `base.dart`) is the shared sentinel for all
@@ -48,9 +49,18 @@ class Context extends AGUIModel {
 /// The optional [parentRunId] mirrors the canonical TS/Python
 /// `RunAgentInput.parentRunId` / `parent_run_id` field; it links the
 /// run to a parent run in nested-run scenarios.
+///
+/// [tools] and [context] are optional on the wire since protocol 1.0, and
+/// absent means empty. [toJson] still writes both, empty or not, because a
+/// 0.x Python agent requires them.
 class RunAgentInput extends AGUIModel {
   final String threadId;
   final String runId;
+
+  /// The protocol version the client speaks, such as [agUiProtocolVersion].
+  /// Left unset, it is omitted: a 0.x agent may reject a field it does not
+  /// know.
+  final String? protocolVersion;
   final String? parentRunId;
   final dynamic state;
   final List<Message> messages;
@@ -58,15 +68,20 @@ class RunAgentInput extends AGUIModel {
   final List<Context> context;
   final dynamic forwardedProps;
 
+  /// Answers to the interrupts the previous run finished with.
+  final List<ResumeEntry>? resume;
+
   const RunAgentInput({
     required this.threadId,
     required this.runId,
+    this.protocolVersion,
     this.parentRunId,
     this.state,
     required this.messages,
-    required this.tools,
-    required this.context,
+    this.tools = const [],
+    this.context = const [],
     this.forwardedProps,
+    this.resume,
   });
 
   factory RunAgentInput.fromJson(Map<String, dynamic> json) {
@@ -81,6 +96,8 @@ class RunAgentInput extends AGUIModel {
         'runId',
         'run_id',
       ),
+      protocolVersion:
+          JsonDecoder.optionalStrictField<String>(json, 'protocolVersion'),
       parentRunId: JsonDecoder.optionalEitherField<String>(
         json,
         'parentRunId',
@@ -118,10 +135,11 @@ class RunAgentInput extends AGUIModel {
         return out;
       }(),
       tools: () {
-        final raw = JsonDecoder.requireListField<Map<String, dynamic>>(
-          json,
-          'tools',
-        );
+        final raw = JsonDecoder.optionalListField<Map<String, dynamic>>(
+              json,
+              'tools',
+            ) ??
+            const [];
         final out = <Tool>[];
         for (var i = 0; i < raw.length; i++) {
           try {
@@ -146,10 +164,11 @@ class RunAgentInput extends AGUIModel {
         return out;
       }(),
       context: () {
-        final raw = JsonDecoder.requireListField<Map<String, dynamic>>(
-          json,
-          'context',
-        );
+        final raw = JsonDecoder.optionalListField<Map<String, dynamic>>(
+              json,
+              'context',
+            ) ??
+            const [];
         final out = <Context>[];
         for (var i = 0; i < raw.length; i++) {
           try {
@@ -182,6 +201,11 @@ class RunAgentInput extends AGUIModel {
       forwardedProps: json.containsKey('forwardedProps')
           ? json['forwardedProps']
           : json['forwarded_props'],
+      resume: JsonDecoder.optionalObjectList(
+        json,
+        'resume',
+        ResumeEntry.fromJson,
+      ),
     );
   }
 
@@ -189,12 +213,14 @@ class RunAgentInput extends AGUIModel {
   Map<String, dynamic> toJson() => {
         'threadId': threadId,
         'runId': runId,
+        if (protocolVersion != null) 'protocolVersion': protocolVersion,
         if (parentRunId != null) 'parentRunId': parentRunId,
         if (state != null) 'state': state,
         'messages': messages.map((m) => m.toJson()).toList(),
         'tools': tools.map((t) => t.toJson()).toList(),
         'context': context.map((c) => c.toJson()).toList(),
         if (forwardedProps != null) 'forwardedProps': forwardedProps,
+        if (resume != null) 'resume': resume!.map((r) => r.toJson()).toList(),
       };
 
   // `parentRunId`, `state`, and `forwardedProps` are nullable —
@@ -204,16 +230,21 @@ class RunAgentInput extends AGUIModel {
   RunAgentInput copyWith({
     String? threadId,
     String? runId,
+    Object? protocolVersion = kUnsetSentinel,
     Object? parentRunId = kUnsetSentinel,
     Object? state = kUnsetSentinel,
     List<Message>? messages,
     List<Tool>? tools,
     List<Context>? context,
     Object? forwardedProps = kUnsetSentinel,
+    Object? resume = kUnsetSentinel,
   }) {
     return RunAgentInput(
       threadId: threadId ?? this.threadId,
       runId: runId ?? this.runId,
+      protocolVersion: identical(protocolVersion, kUnsetSentinel)
+          ? this.protocolVersion
+          : protocolVersion as String?,
       parentRunId: identical(parentRunId, kUnsetSentinel)
           ? this.parentRunId
           : parentRunId as String?,
@@ -224,6 +255,9 @@ class RunAgentInput extends AGUIModel {
       forwardedProps: identical(forwardedProps, kUnsetSentinel)
           ? this.forwardedProps
           : forwardedProps,
+      resume: identical(resume, kUnsetSentinel)
+          ? this.resume
+          : resume as List<ResumeEntry>?,
     );
   }
 }

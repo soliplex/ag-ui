@@ -12,6 +12,7 @@ import 'dart:developer' as developer;
 import '../types/base.dart';
 import '../types/message.dart';
 import '../types/context.dart';
+import '../types/run.dart';
 import 'event_type.dart';
 
 export 'event_type.dart';
@@ -39,8 +40,16 @@ export 'event_type.dart';
 // the optional fields of `TextMessageChunkEvent`,
 // `ToolCallStartEvent.parentMessageId`, the optional fields of
 // `ToolCallChunkEvent`, the optional fields of `ReasoningMessageChunkEvent`,
-// `ThinkingStartEvent.title`, `ToolCallResultEvent.role`,
-// `StateSnapshotEvent.snapshot`, and `RunErrorEvent.code`.
+// `ToolCallResultEvent.role`, `StateSnapshotEvent.snapshot`,
+// `RunErrorEvent.code`, and `metadata` / `subagentRunId` on every event.
+//
+// **Nulls.** A `null` on an optional field that predates protocol 1.0 reads
+// as absent: Python producers before `ag-ui-protocol` 0.1.20 wrote one for
+// every unset field, and this SDK has always accepted them. A field that 1.0
+// introduced (`metadata`, `outcome`, `usage`, `protocolVersion`) has no such
+// producer, so a `null` there is rejected, as the specification says.
+// `subagentRunId` is the exception: the TypeScript client's compatibility
+// boundary tolerates a `null` one, and so does this SDK.
 
 /// Reads the `rawEvent` field from a wire payload, accepting both
 /// `rawEvent` (TypeScript-canonical) and `raw_event` (Python-canonical).
@@ -52,31 +61,51 @@ export 'event_type.dart';
 dynamic _readRawEvent(Map<String, dynamic> json) =>
     json.containsKey('rawEvent') ? json['rawEvent'] : json['raw_event'];
 
-// Hoisted `@Deprecated` messages: each is repeated on the class
-// declaration AND the constructor of the corresponding event type, so a
-// constant lets the planned-removal version (1.0.0) and migration target
-// get edited in one place per event class. Sibling enum-side messages
-// live in `event_type.dart`; the surfaces are intentionally different
-// (enum names vs. event class names).
-// IMPORTANT: Do NOT add `// ignore_for_file: deprecated_member_use_from_same_package`
-// to this file. The per-line `// ignore:` comments below are load-bearing:
-// they enumerate every deprecated event type use so the 1.0.0 removal sweep
-// knows exactly which lines to delete. A file-level suppression would silence
-// the deprecation alarm and make the sweep invisible to the analyzer.
-const String _kThinkingTextMessageStartEventDeprecation =
-    'Use ReasoningMessageStartEvent instead. '
-    'Scheduled for removal in 1.0.0.';
-const String _kThinkingTextMessageContentEventDeprecation =
-    'Use ReasoningMessageContentEvent instead. '
-    'Scheduled for removal in 1.0.0.';
-const String _kThinkingTextMessageEndEventDeprecation =
-    'Use ReasoningMessageEndEvent instead. '
-    'Scheduled for removal in 1.0.0.';
-const String _kThinkingContentEventDeprecation =
-    'Dart-only legacy: never part of the canonical AG-UI protocol '
-    '(TypeScript/Python). '
-    'Use ReasoningMessageContentEvent instead. '
-    'Scheduled for removal in 1.0.0.';
+/// Reads `timestamp`, which 1.0 defines as an integer within JavaScript's
+/// safe range. Never puts [json] on an error: the cipher-bearing events
+/// share this reader.
+int? _readTimestamp(Map<String, dynamic> json) =>
+    JsonDecoder.optionalSafeInteger(json, 'timestamp');
+
+/// Reads the open `metadata` object. Never puts [json] on an error: the
+/// cipher-bearing events share this reader.
+Map<String, dynamic>? _readMetadata(Map<String, dynamic> json) =>
+    JsonDecoder.optionalMetadata(json, 'metadata');
+
+/// Reads `subagentRunId` (or `subagent_run_id`); a `null` reads as absent.
+String? _readSubagentRunId(Map<String, dynamic> json) =>
+    JsonDecoder.optionalEitherField<String>(
+      json,
+      'subagentRunId',
+      'subagent_run_id',
+    );
+
+/// Reads an optional outcome object with [decode]. `outcome` is new in 1.0,
+/// so a `null` one is malformed rather than absent.
+T? _readOutcome<T>(
+  Map<String, dynamic> json,
+  T Function(Map<String, dynamic>) decode,
+) {
+  final raw = JsonDecoder.optionalStrictField<Map<String, dynamic>>(
+    json,
+    'outcome',
+  );
+  if (raw == null) return null;
+  try {
+    return decode(raw);
+  } on AGUIValidationError catch (e) {
+    throw AGUIValidationError(
+      message: e.message,
+      field: e.field == null ? 'outcome' : 'outcome.${e.field}',
+      value: e.value,
+    );
+  }
+}
+
+/// Resolves a `copyWith` argument against [current]: [kUnsetSentinel] keeps
+/// the current value, anything else (including `null`) replaces it.
+T _pick<T>(Object? value, T current) =>
+    identical(value, kUnsetSentinel) ? current : value as T;
 
 /// Base event for all AG-UI protocol events.
 ///
@@ -112,10 +141,25 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
   /// structured payload contains `encryptedValue` data.
   final dynamic rawEvent;
 
+  /// Open, application-defined data about this event. The protocol never
+  /// interprets it, and it is the sanctioned place for extra data.
+  final Map<String, dynamic>? metadata;
+
+  /// The subagent run this event belongs to, when a subagent produced it.
+  ///
+  /// Absent means the event belongs to the run itself. `RUN_STARTED`,
+  /// `RUN_FINISHED`, `RUN_ERROR` and `MESSAGES_SNAPSHOT` are never
+  /// attributed, so this is always `null` on them. The subagent lifecycle
+  /// events ([SubagentStartedEvent], [SubagentFinishedEvent],
+  /// [SubagentErrorEvent]) always carry one.
+  final String? subagentRunId;
+
   const BaseEvent({
     required this.eventType,
     this.timestamp,
     this.rawEvent,
+    this.metadata,
+    this.subagentRunId,
   });
 
   @override
@@ -167,25 +211,6 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
         return TextMessageEndEvent.fromJson(json);
       case EventType.textMessageChunk:
         return TextMessageChunkEvent.fromJson(json);
-      // TODO(1.0.0): Remove the following deprecated cases + their event classes:
-      //   ThinkingTextMessageStartEvent, ThinkingTextMessageContentEvent,
-      //   ThinkingTextMessageEndEvent, ThinkingContentEvent.
-      //   Also remove EventType.thinkingTextMessage* / thinkingContent enum
-      //   values, the _kThinkingTextMessage*Deprecation / _kThinkingContent*
-      //   Deprecation constants, and the deprecated TimeoutError typedef in
-      //   client/errors.dart.
-      // ignore: deprecated_member_use_from_same_package
-      case EventType.thinkingTextMessageStart:
-        // ignore: deprecated_member_use_from_same_package
-        return ThinkingTextMessageStartEvent.fromJson(json);
-      // ignore: deprecated_member_use_from_same_package
-      case EventType.thinkingTextMessageContent:
-        // ignore: deprecated_member_use_from_same_package
-        return ThinkingTextMessageContentEvent.fromJson(json);
-      // ignore: deprecated_member_use_from_same_package
-      case EventType.thinkingTextMessageEnd:
-        // ignore: deprecated_member_use_from_same_package
-        return ThinkingTextMessageEndEvent.fromJson(json);
       case EventType.toolCallStart:
         return ToolCallStartEvent.fromJson(json);
       case EventType.toolCallArgs:
@@ -196,14 +221,6 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
         return ToolCallChunkEvent.fromJson(json);
       case EventType.toolCallResult:
         return ToolCallResultEvent.fromJson(json);
-      case EventType.thinkingStart:
-        return ThinkingStartEvent.fromJson(json);
-      // ignore: deprecated_member_use_from_same_package
-      case EventType.thinkingContent:
-        // ignore: deprecated_member_use_from_same_package
-        return ThinkingContentEvent.fromJson(json);
-      case EventType.thinkingEnd:
-        return ThinkingEndEvent.fromJson(json);
       case EventType.stateSnapshot:
         return StateSnapshotEvent.fromJson(json);
       case EventType.stateDelta:
@@ -242,6 +259,12 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
         return ReasoningEndEvent.fromJson(json);
       case EventType.reasoningEncryptedValue:
         return ReasoningEncryptedValueEvent.fromJson(json);
+      case EventType.subagentStarted:
+        return SubagentStartedEvent.fromJson(json);
+      case EventType.subagentFinished:
+        return SubagentFinishedEvent.fromJson(json);
+      case EventType.subagentError:
+        return SubagentErrorEvent.fromJson(json);
       // No `default` clause — exhaustive switch on the [EventType] enum
       // (analyzer-enforced). A new EventType value will produce a compile
       // error here AND in `EventDecoder.validate`, which is the desired
@@ -254,6 +277,8 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
         'type': eventType.value,
         if (timestamp != null) 'timestamp': timestamp,
         if (rawEvent != null) 'rawEvent': rawEvent,
+        if (metadata != null) 'metadata': metadata,
+        if (subagentRunId != null) 'subagentRunId': subagentRunId,
       };
 }
 
@@ -304,15 +329,21 @@ enum TextMessageRole {
 /// Event indicating the start of a text message
 final class TextMessageStartEvent extends BaseEvent {
   final String messageId;
-  final TextMessageRole role;
+
+  /// The role of the message's author. 1.0 gives it no default: absent
+  /// means the producer did not say, which a consumer usually reads as
+  /// `assistant`.
+  final TextMessageRole? role;
   final String? name;
 
   const TextMessageStartEvent({
     required this.messageId,
-    this.role = TextMessageRole.assistant,
+    this.role,
     this.name,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.textMessageStart);
 
   factory TextMessageStartEvent.fromJson(Map<String, dynamic> json) {
@@ -322,7 +353,7 @@ final class TextMessageStartEvent extends BaseEvent {
       'message_id',
     );
     final roleStr = JsonDecoder.optionalField<String>(json, 'role');
-    var role = TextMessageRole.assistant;
+    TextMessageRole? role;
     if (roleStr != null) {
       try {
         role = TextMessageRole.fromString(roleStr);
@@ -345,7 +376,9 @@ final class TextMessageStartEvent extends BaseEvent {
       messageId: messageId,
       role: role,
       name: JsonDecoder.optionalField<String>(json, 'name'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -354,7 +387,7 @@ final class TextMessageStartEvent extends BaseEvent {
   Map<String, dynamic> toJson() => {
         ...super.toJson(),
         'messageId': messageId,
-        'role': role.value,
+        if (role != null) 'role': role!.value,
         if (name != null) 'name': name,
       };
 
@@ -362,16 +395,20 @@ final class TextMessageStartEvent extends BaseEvent {
   @override
   TextMessageStartEvent copyWith({
     String? messageId,
-    TextMessageRole? role,
+    Object? role = kUnsetSentinel,
     Object? name = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return TextMessageStartEvent(
       messageId: messageId ?? this.messageId,
-      role: role ?? this.role,
+      role: _pick(role, this.role),
       name: identical(name, kUnsetSentinel) ? this.name : name as String?,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -387,6 +424,8 @@ final class TextMessageContentEvent extends BaseEvent {
     required this.delta,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.textMessageContent);
 
   factory TextMessageContentEvent.fromJson(Map<String, dynamic> json) {
@@ -407,7 +446,9 @@ final class TextMessageContentEvent extends BaseEvent {
     return TextMessageContentEvent(
       messageId: messageId,
       delta: delta,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -424,12 +465,16 @@ final class TextMessageContentEvent extends BaseEvent {
     String? messageId,
     String? delta,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return TextMessageContentEvent(
       messageId: messageId ?? this.messageId,
       delta: delta ?? this.delta,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -443,6 +488,8 @@ final class TextMessageEndEvent extends BaseEvent {
     required this.messageId,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.textMessageEnd);
 
   factory TextMessageEndEvent.fromJson(Map<String, dynamic> json) {
@@ -452,7 +499,9 @@ final class TextMessageEndEvent extends BaseEvent {
         'messageId',
         'message_id',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -467,11 +516,15 @@ final class TextMessageEndEvent extends BaseEvent {
   TextMessageEndEvent copyWith({
     String? messageId,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return TextMessageEndEvent(
       messageId: messageId ?? this.messageId,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -491,6 +544,8 @@ final class TextMessageChunkEvent extends BaseEvent {
     this.name,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.textMessageChunk);
 
   factory TextMessageChunkEvent.fromJson(Map<String, dynamic> json) {
@@ -516,7 +571,9 @@ final class TextMessageChunkEvent extends BaseEvent {
       role: role,
       delta: JsonDecoder.optionalField<String>(json, 'delta'),
       name: JsonDecoder.optionalField<String>(json, 'name'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -538,6 +595,8 @@ final class TextMessageChunkEvent extends BaseEvent {
     Object? delta = kUnsetSentinel,
     Object? name = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return TextMessageChunkEvent(
@@ -550,238 +609,8 @@ final class TextMessageChunkEvent extends BaseEvent {
       delta: identical(delta, kUnsetSentinel) ? this.delta : delta as String?,
       name: identical(name, kUnsetSentinel) ? this.name : name as String?,
       timestamp: timestamp ?? this.timestamp,
-      rawEvent: rawEvent ?? this.rawEvent,
-    );
-  }
-}
-
-// ============================================================================
-// Thinking Events
-// ============================================================================
-
-/// Event indicating the start of a thinking section
-final class ThinkingStartEvent extends BaseEvent {
-  final String? title;
-
-  const ThinkingStartEvent({
-    this.title,
-    super.timestamp,
-    super.rawEvent,
-  }) : super(eventType: EventType.thinkingStart);
-
-  factory ThinkingStartEvent.fromJson(Map<String, dynamic> json) {
-    return ThinkingStartEvent(
-      title: JsonDecoder.optionalField<String>(json, 'title'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
-      rawEvent: _readRawEvent(json),
-    );
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        ...super.toJson(),
-        if (title != null) 'title': title,
-      };
-
-  @override
-  ThinkingStartEvent copyWith({
-    Object? title = kUnsetSentinel,
-    int? timestamp,
-    dynamic rawEvent,
-  }) {
-    return ThinkingStartEvent(
-      title: identical(title, kUnsetSentinel) ? this.title : title as String?,
-      timestamp: timestamp ?? this.timestamp,
-      rawEvent: rawEvent ?? this.rawEvent,
-    );
-  }
-}
-
-/// Event containing thinking content.
-///
-/// Dart-only legacy: never part of the canonical AG-UI protocol
-/// (TypeScript/Python). Included only for backward compatibility with
-/// pre-0.2.0 Dart consumers. Use [ThinkingTextMessageContentEvent] instead.
-@Deprecated(_kThinkingContentEventDeprecation)
-final class ThinkingContentEvent extends BaseEvent {
-  final String delta;
-
-  @Deprecated(_kThinkingContentEventDeprecation)
-  const ThinkingContentEvent({
-    required this.delta,
-    super.timestamp,
-    super.rawEvent,
-  }) : super(eventType: EventType.thinkingContent);
-
-  factory ThinkingContentEvent.fromJson(Map<String, dynamic> json) {
-    // Empty `delta` is accepted to match the relaxed canonical contract
-    // (`z.string()` / `delta: str`). Migrate to [ReasoningMessageContentEvent].
-    final delta = JsonDecoder.requireField<String>(json, 'delta');
-    return ThinkingContentEvent(
-      delta: delta,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
-      rawEvent: _readRawEvent(json),
-    );
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        ...super.toJson(),
-        'delta': delta,
-      };
-
-  @override
-  ThinkingContentEvent copyWith({
-    String? delta,
-    int? timestamp,
-    dynamic rawEvent,
-  }) {
-    return ThinkingContentEvent(
-      delta: delta ?? this.delta,
-      timestamp: timestamp ?? this.timestamp,
-      rawEvent: rawEvent ?? this.rawEvent,
-    );
-  }
-}
-
-/// Event indicating the end of a thinking section
-final class ThinkingEndEvent extends BaseEvent {
-  const ThinkingEndEvent({
-    super.timestamp,
-    super.rawEvent,
-  }) : super(eventType: EventType.thinkingEnd);
-
-  factory ThinkingEndEvent.fromJson(Map<String, dynamic> json) {
-    return ThinkingEndEvent(
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
-      rawEvent: _readRawEvent(json),
-    );
-  }
-
-  @override
-  ThinkingEndEvent copyWith({
-    int? timestamp,
-    dynamic rawEvent,
-  }) {
-    return ThinkingEndEvent(
-      timestamp: timestamp ?? this.timestamp,
-      rawEvent: rawEvent ?? this.rawEvent,
-    );
-  }
-}
-
-/// Event indicating the start of a thinking text message.
-///
-/// Deprecated in favor of [ReasoningMessageStartEvent], mirroring the
-/// canonical TypeScript SDK deprecation of `THINKING_TEXT_MESSAGE_*` in
-/// favor of `REASONING_*`. Decoding remains supported for backward
-/// compatibility; scheduled for removal in 1.0.0.
-@Deprecated(_kThinkingTextMessageStartEventDeprecation)
-final class ThinkingTextMessageStartEvent extends BaseEvent {
-  @Deprecated(_kThinkingTextMessageStartEventDeprecation)
-  const ThinkingTextMessageStartEvent({
-    super.timestamp,
-    super.rawEvent,
-    // ignore: deprecated_member_use_from_same_package
-  }) : super(eventType: EventType.thinkingTextMessageStart);
-
-  factory ThinkingTextMessageStartEvent.fromJson(Map<String, dynamic> json) {
-    return ThinkingTextMessageStartEvent(
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
-      rawEvent: _readRawEvent(json),
-    );
-  }
-
-  @override
-  ThinkingTextMessageStartEvent copyWith({
-    int? timestamp,
-    dynamic rawEvent,
-  }) {
-    return ThinkingTextMessageStartEvent(
-      timestamp: timestamp ?? this.timestamp,
-      rawEvent: rawEvent ?? this.rawEvent,
-    );
-  }
-}
-
-/// Event containing thinking text message content.
-///
-/// Deprecated in favor of [ReasoningMessageContentEvent], mirroring the
-/// canonical TypeScript SDK deprecation of `THINKING_TEXT_MESSAGE_*` in
-/// favor of `REASONING_*`. Decoding remains supported for backward
-/// compatibility; scheduled for removal in 1.0.0.
-@Deprecated(_kThinkingTextMessageContentEventDeprecation)
-final class ThinkingTextMessageContentEvent extends BaseEvent {
-  final String delta;
-
-  @Deprecated(_kThinkingTextMessageContentEventDeprecation)
-  const ThinkingTextMessageContentEvent({
-    required this.delta,
-    super.timestamp,
-    super.rawEvent,
-    // ignore: deprecated_member_use_from_same_package
-  }) : super(eventType: EventType.thinkingTextMessageContent);
-
-  factory ThinkingTextMessageContentEvent.fromJson(Map<String, dynamic> json) {
-    // No identifier on this event. Empty `delta` is accepted to match the
-    // relaxed canonical contract (`z.string()` / `delta: str`).
-    final delta = JsonDecoder.requireField<String>(json, 'delta');
-    return ThinkingTextMessageContentEvent(
-      delta: delta,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
-      rawEvent: _readRawEvent(json),
-    );
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        ...super.toJson(),
-        'delta': delta,
-      };
-
-  @override
-  ThinkingTextMessageContentEvent copyWith({
-    String? delta,
-    int? timestamp,
-    dynamic rawEvent,
-  }) {
-    return ThinkingTextMessageContentEvent(
-      delta: delta ?? this.delta,
-      timestamp: timestamp ?? this.timestamp,
-      rawEvent: rawEvent ?? this.rawEvent,
-    );
-  }
-}
-
-/// Event indicating the end of a thinking text message.
-///
-/// Deprecated in favor of [ReasoningMessageEndEvent], mirroring the
-/// canonical TypeScript SDK deprecation of `THINKING_TEXT_MESSAGE_*` in
-/// favor of `REASONING_*`. Decoding remains supported for backward
-/// compatibility; scheduled for removal in 1.0.0.
-@Deprecated(_kThinkingTextMessageEndEventDeprecation)
-final class ThinkingTextMessageEndEvent extends BaseEvent {
-  @Deprecated(_kThinkingTextMessageEndEventDeprecation)
-  const ThinkingTextMessageEndEvent({
-    super.timestamp,
-    super.rawEvent,
-    // ignore: deprecated_member_use_from_same_package
-  }) : super(eventType: EventType.thinkingTextMessageEnd);
-
-  factory ThinkingTextMessageEndEvent.fromJson(Map<String, dynamic> json) {
-    return ThinkingTextMessageEndEvent(
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
-      rawEvent: _readRawEvent(json),
-    );
-  }
-
-  @override
-  ThinkingTextMessageEndEvent copyWith({
-    int? timestamp,
-    dynamic rawEvent,
-  }) {
-    return ThinkingTextMessageEndEvent(
-      timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -803,6 +632,8 @@ final class ToolCallStartEvent extends BaseEvent {
     this.parentMessageId,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.toolCallStart);
 
   factory ToolCallStartEvent.fromJson(Map<String, dynamic> json) {
@@ -822,7 +653,9 @@ final class ToolCallStartEvent extends BaseEvent {
         'parentMessageId',
         'parent_message_id',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -842,6 +675,8 @@ final class ToolCallStartEvent extends BaseEvent {
     String? toolCallName,
     Object? parentMessageId = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ToolCallStartEvent(
@@ -851,6 +686,8 @@ final class ToolCallStartEvent extends BaseEvent {
           ? this.parentMessageId
           : parentMessageId as String?,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -866,6 +703,8 @@ final class ToolCallArgsEvent extends BaseEvent {
     required this.delta,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.toolCallArgs);
 
   factory ToolCallArgsEvent.fromJson(Map<String, dynamic> json) {
@@ -880,7 +719,9 @@ final class ToolCallArgsEvent extends BaseEvent {
     return ToolCallArgsEvent(
       toolCallId: toolCallId,
       delta: delta,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -897,12 +738,16 @@ final class ToolCallArgsEvent extends BaseEvent {
     String? toolCallId,
     String? delta,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ToolCallArgsEvent(
       toolCallId: toolCallId ?? this.toolCallId,
       delta: delta ?? this.delta,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -916,6 +761,8 @@ final class ToolCallEndEvent extends BaseEvent {
     required this.toolCallId,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.toolCallEnd);
 
   factory ToolCallEndEvent.fromJson(Map<String, dynamic> json) {
@@ -925,7 +772,9 @@ final class ToolCallEndEvent extends BaseEvent {
         'toolCallId',
         'tool_call_id',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -940,11 +789,15 @@ final class ToolCallEndEvent extends BaseEvent {
   ToolCallEndEvent copyWith({
     String? toolCallId,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ToolCallEndEvent(
       toolCallId: toolCallId ?? this.toolCallId,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -964,6 +817,8 @@ final class ToolCallChunkEvent extends BaseEvent {
     this.delta,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.toolCallChunk);
 
   factory ToolCallChunkEvent.fromJson(Map<String, dynamic> json) {
@@ -984,7 +839,9 @@ final class ToolCallChunkEvent extends BaseEvent {
         'parent_message_id',
       ),
       delta: JsonDecoder.optionalField<String>(json, 'delta'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1006,6 +863,8 @@ final class ToolCallChunkEvent extends BaseEvent {
     Object? parentMessageId = kUnsetSentinel,
     Object? delta = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ToolCallChunkEvent(
@@ -1020,6 +879,8 @@ final class ToolCallChunkEvent extends BaseEvent {
           : parentMessageId as String?,
       delta: identical(delta, kUnsetSentinel) ? this.delta : delta as String?,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1056,10 +917,15 @@ enum ToolCallResultRole {
 }
 
 /// Event containing the result of a tool call
+///
+/// Since protocol 1.0 the result is text or an ordered list of
+/// [ContentPart]s, modeled by [messageContent]; [content] projects it to text.
 final class ToolCallResultEvent extends BaseEvent {
   final String messageId;
   final String toolCallId;
-  final String content;
+
+  /// The result: [TextContent] or [MultimodalContent].
+  final MessageContent messageContent;
 
   /// Optional role discriminator for the tool-call result.
   ///
@@ -1067,13 +933,29 @@ final class ToolCallResultEvent extends BaseEvent {
   /// pattern — same as every other nullable field on this event.
   final ToolCallResultRole? role;
 
-  const ToolCallResultEvent({
+  /// Creates a result event whose content is text.
+  ToolCallResultEvent({
     required this.messageId,
     required this.toolCallId,
-    required this.content,
+    required String content,
     this.role,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
+  })  : messageContent = TextContent(content),
+        super(eventType: EventType.toolCallResult);
+
+  /// Creates a result event from a [MessageContent] value.
+  const ToolCallResultEvent.fromContent({
+    required this.messageId,
+    required this.toolCallId,
+    required this.messageContent,
+    this.role,
+    super.timestamp,
+    super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.toolCallResult);
 
   factory ToolCallResultEvent.fromJson(Map<String, dynamic> json) {
@@ -1092,7 +974,7 @@ final class ToolCallResultEvent extends BaseEvent {
         role = ToolCallResultRole.tool;
       }
     }
-    return ToolCallResultEvent(
+    return ToolCallResultEvent.fromContent(
       messageId: JsonDecoder.requireEitherField<String>(
         json,
         'messageId',
@@ -1103,19 +985,33 @@ final class ToolCallResultEvent extends BaseEvent {
         'toolCallId',
         'tool_call_id',
       ),
-      content: JsonDecoder.requireField<String>(json, 'content'),
+      messageContent: () {
+        if (!json.containsKey('content')) {
+          throw AGUIValidationError(
+            message: 'Missing required field',
+            field: 'content',
+            json: json,
+          );
+        }
+        return MessageContent.fromJson(json['content']);
+      }(),
       role: role,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
+
+  /// The result as text; see [MessageContent.text].
+  String get content => messageContent.text;
 
   @override
   Map<String, dynamic> toJson() => {
         ...super.toJson(),
         'messageId': messageId,
         'toolCallId': toolCallId,
-        'content': content,
+        'content': messageContent.toJson(),
         if (role != null) 'role': role!.value,
       };
 
@@ -1123,19 +1019,23 @@ final class ToolCallResultEvent extends BaseEvent {
   ToolCallResultEvent copyWith({
     String? messageId,
     String? toolCallId,
-    String? content,
+    MessageContent? messageContent,
     Object? role = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
-    return ToolCallResultEvent(
+    return ToolCallResultEvent.fromContent(
       messageId: messageId ?? this.messageId,
       toolCallId: toolCallId ?? this.toolCallId,
-      content: content ?? this.content,
+      messageContent: messageContent ?? this.messageContent,
       role: identical(role, kUnsetSentinel)
           ? this.role
           : role as ToolCallResultRole?,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1156,6 +1056,8 @@ final class StateSnapshotEvent extends BaseEvent {
     required this.snapshot,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.stateSnapshot);
 
   factory StateSnapshotEvent.fromJson(Map<String, dynamic> json) {
@@ -1173,7 +1075,9 @@ final class StateSnapshotEvent extends BaseEvent {
     }
     return StateSnapshotEvent(
       snapshot: json['snapshot'],
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1188,11 +1092,15 @@ final class StateSnapshotEvent extends BaseEvent {
   StateSnapshotEvent copyWith({
     Object? snapshot = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return StateSnapshotEvent(
       snapshot: identical(snapshot, kUnsetSentinel) ? this.snapshot : snapshot,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1210,12 +1118,16 @@ final class StateDeltaEvent extends BaseEvent {
     required this.delta,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.stateDelta);
 
   factory StateDeltaEvent.fromJson(Map<String, dynamic> json) {
     return StateDeltaEvent(
-      delta: JsonDecoder.requireListField<Map<String, dynamic>>(json, 'delta'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      delta: JsonDecoder.requireJsonPatch(json, 'delta'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1230,11 +1142,15 @@ final class StateDeltaEvent extends BaseEvent {
   StateDeltaEvent copyWith({
     List<Map<String, dynamic>>? delta,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return StateDeltaEvent(
       delta: delta ?? this.delta,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1262,6 +1178,7 @@ final class MessagesSnapshotEvent extends BaseEvent {
     required this.messages,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
   }) : super(eventType: EventType.messagesSnapshot) {
     // Direct-construction caveat: this guard only inspects the structured
     // Message.encryptedValue field. A caller that already has a wire-form
@@ -1335,7 +1252,8 @@ final class MessagesSnapshotEvent extends BaseEvent {
                 m.containsKey('encrypted_value')));
     return MessagesSnapshotEvent(
       messages: messages,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
       rawEvent: hasCipher ? null : _readRawEvent(json),
     );
   }
@@ -1363,6 +1281,7 @@ final class MessagesSnapshotEvent extends BaseEvent {
   MessagesSnapshotEvent copyWith({
     List<Message>? messages,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
     Object? rawEvent = kUnsetSentinel,
   }) {
     final newMessages = messages ?? this.messages;
@@ -1376,9 +1295,7 @@ final class MessagesSnapshotEvent extends BaseEvent {
     // rawEvent that will be silently scrubbed. The force-to-null below is
     // the authoritative safety measure; the log helps callers diagnose
     // unexpected scrub in production without crashing.
-    if (hasCipher &&
-        !identical(rawEvent, kUnsetSentinel) &&
-        rawEvent != null) {
+    if (hasCipher && !identical(rawEvent, kUnsetSentinel) && rawEvent != null) {
       developer.log(
         'MessagesSnapshotEvent.copyWith: rawEvent is silently forced to null '
         'when any message carries encryptedValue. Construct directly if you '
@@ -1398,6 +1315,7 @@ final class MessagesSnapshotEvent extends BaseEvent {
     return MessagesSnapshotEvent(
       messages: newMessages,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
       rawEvent: resolvedRaw,
     );
   }
@@ -1409,19 +1327,11 @@ final class MessagesSnapshotEvent extends BaseEvent {
 
 /// Event containing a snapshot of an activity message.
 ///
-/// Note: [content] is typed `Object?` rather than `Map<String, dynamic>`.
-/// The canonical TypeScript schema requires a non-null record
-/// (`z.record(z.any())`); the Dart SDK is intentionally more permissive on
-/// the *value* (allows primitives and `null`) to stay forward-compatible
-/// with the Python reference server's `content: Any`. The *key itself*
-/// is still required — see the matching note on `StateSnapshotEvent.fromJson`
-/// for why we check key-presence rather than `requireField<T>`. Treat any
-/// non-record value you encounter as a wire-protocol surprise rather than
-/// a contract.
+/// [content] is a JSON object, as protocol 1.0 requires.
 final class ActivitySnapshotEvent extends BaseEvent {
   final String messageId;
   final String activityType;
-  final Object? content;
+  final Map<String, dynamic> content;
 
   /// `true` (the default) means this snapshot replaces any prior content
   /// for the same [messageId]; `false` means it merges/extends.
@@ -1440,19 +1350,11 @@ final class ActivitySnapshotEvent extends BaseEvent {
     this.replace = true,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.activitySnapshot);
 
   factory ActivitySnapshotEvent.fromJson(Map<String, dynamic> json) {
-    // `content` may be any JSON shape (including `null`) but MUST be
-    // present — see the matching note on `StateSnapshotEvent.fromJson`
-    // for why we check key-presence rather than `requireField<T>`.
-    if (!json.containsKey('content')) {
-      throw AGUIValidationError(
-        message: 'Missing required field',
-        field: 'content',
-        json: json,
-      );
-    }
     return ActivitySnapshotEvent(
       messageId: JsonDecoder.requireEitherField<String>(
         json,
@@ -1464,9 +1366,11 @@ final class ActivitySnapshotEvent extends BaseEvent {
         'activityType',
         'activity_type',
       ),
-      content: json['content'],
+      content: JsonDecoder.requireField<Map<String, dynamic>>(json, 'content'),
       replace: JsonDecoder.optionalField<bool>(json, 'replace') ?? true,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1488,17 +1392,21 @@ final class ActivitySnapshotEvent extends BaseEvent {
   ActivitySnapshotEvent copyWith({
     String? messageId,
     String? activityType,
-    Object? content = kUnsetSentinel,
+    Map<String, dynamic>? content,
     bool? replace,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ActivitySnapshotEvent(
       messageId: messageId ?? this.messageId,
       activityType: activityType ?? this.activityType,
-      content: identical(content, kUnsetSentinel) ? this.content : content,
+      content: content ?? this.content,
       replace: replace ?? this.replace,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1519,6 +1427,8 @@ final class ActivityDeltaEvent extends BaseEvent {
     required this.patch,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.activityDelta);
 
   factory ActivityDeltaEvent.fromJson(Map<String, dynamic> json) {
@@ -1533,8 +1443,10 @@ final class ActivityDeltaEvent extends BaseEvent {
         'activityType',
         'activity_type',
       ),
-      patch: JsonDecoder.requireListField<Map<String, dynamic>>(json, 'patch'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      patch: JsonDecoder.requireJsonPatch(json, 'patch'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1553,6 +1465,8 @@ final class ActivityDeltaEvent extends BaseEvent {
     String? activityType,
     List<Map<String, dynamic>>? patch,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ActivityDeltaEvent(
@@ -1560,6 +1474,8 @@ final class ActivityDeltaEvent extends BaseEvent {
       activityType: activityType ?? this.activityType,
       patch: patch ?? this.patch,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1585,6 +1501,8 @@ final class RawEvent extends BaseEvent {
     this.source,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.raw);
 
   /// Decodes a [RawEvent] from a JSON map.
@@ -1608,7 +1526,9 @@ final class RawEvent extends BaseEvent {
     return RawEvent(
       event: json['event'],
       source: JsonDecoder.optionalField<String>(json, 'source'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1628,6 +1548,8 @@ final class RawEvent extends BaseEvent {
     Object? event = kUnsetSentinel,
     Object? source = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return RawEvent(
@@ -1635,6 +1557,8 @@ final class RawEvent extends BaseEvent {
       source:
           identical(source, kUnsetSentinel) ? this.source : source as String?,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1650,6 +1574,8 @@ final class CustomEvent extends BaseEvent {
     required this.value,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.custom);
 
   factory CustomEvent.fromJson(Map<String, dynamic> json) {
@@ -1666,7 +1592,9 @@ final class CustomEvent extends BaseEvent {
     return CustomEvent(
       name: JsonDecoder.requireField<String>(json, 'name'),
       value: json['value'],
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1684,12 +1612,16 @@ final class CustomEvent extends BaseEvent {
     String? name,
     Object? value = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return CustomEvent(
       name: name ?? this.name,
       value: identical(value, kUnsetSentinel) ? this.value : value,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1703,6 +1635,10 @@ final class CustomEvent extends BaseEvent {
 final class RunStartedEvent extends BaseEvent {
   final String threadId;
   final String runId;
+
+  /// The protocol version the producer speaks, such as `1.0`. Absent means
+  /// a producer from before 1.0, which had no version field.
+  final String? protocolVersion;
   final String? parentRunId;
 
   /// Optional `RUN_STARTED` input snapshot. On the wire the `input` key
@@ -1715,10 +1651,12 @@ final class RunStartedEvent extends BaseEvent {
   RunStartedEvent({
     required this.threadId,
     required this.runId,
+    this.protocolVersion,
     this.parentRunId,
     this.input,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
   }) : super(eventType: EventType.runStarted) {
     if (rawEvent != null &&
         input != null &&
@@ -1795,13 +1733,16 @@ final class RunStartedEvent extends BaseEvent {
         'runId',
         'run_id',
       ),
+      protocolVersion:
+          JsonDecoder.optionalStrictField<String>(json, 'protocolVersion'),
       parentRunId: JsonDecoder.optionalEitherField<String>(
         json,
         'parentRunId',
         'parent_run_id',
       ),
       input: input,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
       rawEvent: hasCipher ? null : _readRawEvent(json),
     );
   }
@@ -1811,6 +1752,7 @@ final class RunStartedEvent extends BaseEvent {
         ...super.toJson(),
         'threadId': threadId,
         'runId': runId,
+        if (protocolVersion != null) 'protocolVersion': protocolVersion,
         if (parentRunId != null) 'parentRunId': parentRunId,
         if (input != null) 'input': input!.toJson(),
       };
@@ -1830,9 +1772,11 @@ final class RunStartedEvent extends BaseEvent {
   RunStartedEvent copyWith({
     String? threadId,
     String? runId,
+    Object? protocolVersion = kUnsetSentinel,
     Object? parentRunId = kUnsetSentinel,
     Object? input = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
     Object? rawEvent = kUnsetSentinel,
   }) {
     // The sentinel check MUST come before the type check — if input IS the
@@ -1846,19 +1790,16 @@ final class RunStartedEvent extends BaseEvent {
         'must be RunAgentInput?, null, or kUnsetSentinel',
       );
     }
-    final newInput = identical(input, kUnsetSentinel)
-        ? this.input
-        : input as RunAgentInput?;
+    final newInput =
+        identical(input, kUnsetSentinel) ? this.input : input as RunAgentInput?;
     // Re-apply the fromJson cipher-scrub invariant on the resolved input.
-    final hasCipher =
-        newInput != null && newInput.messages.any((m) => m.encryptedValue != null);
+    final hasCipher = newInput != null &&
+        newInput.messages.any((m) => m.encryptedValue != null);
     // Log in all builds (including release) when a caller passes a non-null
     // rawEvent that will be silently scrubbed. The force-to-null below is
     // the authoritative safety measure; the log helps callers diagnose
     // unexpected scrub in production without crashing.
-    if (hasCipher &&
-        !identical(rawEvent, kUnsetSentinel) &&
-        rawEvent != null) {
+    if (hasCipher && !identical(rawEvent, kUnsetSentinel) && rawEvent != null) {
       developer.log(
         'RunStartedEvent.copyWith: rawEvent is silently forced to null '
         'when any input message carries encryptedValue. Construct directly if '
@@ -1878,11 +1819,13 @@ final class RunStartedEvent extends BaseEvent {
     return RunStartedEvent(
       threadId: threadId ?? this.threadId,
       runId: runId ?? this.runId,
+      protocolVersion: _pick(protocolVersion, this.protocolVersion),
       parentRunId: identical(parentRunId, kUnsetSentinel)
           ? this.parentRunId
           : parentRunId as String?,
       input: newInput,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
       rawEvent: resolvedRaw,
     );
   }
@@ -1910,12 +1853,22 @@ final class RunFinishedEvent extends BaseEvent {
   /// directly with the field always emitted.
   final dynamic result;
 
+  /// How the run finished. Absent means a producer from before 1.0, and
+  /// reads as success.
+  final RunFinishedOutcome? outcome;
+
+  /// Token counts for the run, one entry per model or provider it called.
+  final List<TokenUsage>? usage;
+
   const RunFinishedEvent({
     required this.threadId,
     required this.runId,
     this.result,
+    this.outcome,
+    this.usage,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
   }) : super(eventType: EventType.runFinished);
 
   factory RunFinishedEvent.fromJson(Map<String, dynamic> json) {
@@ -1935,7 +1888,10 @@ final class RunFinishedEvent extends BaseEvent {
         'run_id',
       ),
       result: json['result'],
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      outcome: _readOutcome(json, RunFinishedOutcome.fromJson),
+      usage: JsonDecoder.optionalObjectList(json, 'usage', TokenUsage.fromJson),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1946,6 +1902,8 @@ final class RunFinishedEvent extends BaseEvent {
         'threadId': threadId,
         'runId': runId,
         if (result != null) 'result': result,
+        if (outcome != null) 'outcome': outcome!.toJson(),
+        if (usage != null) 'usage': usage!.map((u) => u.toJson()).toList(),
       };
 
   // See `_Unset` (top of file) for the sentinel rationale.
@@ -1954,14 +1912,20 @@ final class RunFinishedEvent extends BaseEvent {
     String? threadId,
     String? runId,
     Object? result = kUnsetSentinel,
+    Object? outcome = kUnsetSentinel,
+    Object? usage = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return RunFinishedEvent(
       threadId: threadId ?? this.threadId,
       runId: runId ?? this.runId,
       result: identical(result, kUnsetSentinel) ? this.result : result,
+      outcome: _pick(outcome, this.outcome),
+      usage: _pick(usage, this.usage),
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -1974,18 +1938,32 @@ final class RunErrorEvent extends BaseEvent {
   /// Optional machine-readable error code.
   final String? code;
 
+  /// Token counts spent before the run failed.
+  final List<TokenUsage>? usage;
+
   const RunErrorEvent({
     required this.message,
     this.code,
+    this.usage,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
   }) : super(eventType: EventType.runError);
 
   factory RunErrorEvent.fromJson(Map<String, dynamic> json) {
     return RunErrorEvent(
       message: JsonDecoder.requireField<String>(json, 'message'),
       code: JsonDecoder.optionalField<String>(json, 'code'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      // A `null` usage is tolerated here, as the TypeScript client does:
+      // early 1.0 Python producers wrote one.
+      usage: JsonDecoder.optionalObjectList(
+        json,
+        'usage',
+        TokenUsage.fromJson,
+        nullable: true,
+      ),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -1995,19 +1973,24 @@ final class RunErrorEvent extends BaseEvent {
         ...super.toJson(),
         'message': message,
         if (code != null) 'code': code,
+        if (usage != null) 'usage': usage!.map((u) => u.toJson()).toList(),
       };
 
   @override
   RunErrorEvent copyWith({
     String? message,
     Object? code = kUnsetSentinel,
+    Object? usage = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return RunErrorEvent(
       message: message ?? this.message,
       code: identical(code, kUnsetSentinel) ? this.code : code as String?,
+      usage: _pick(usage, this.usage),
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2021,6 +2004,8 @@ final class StepStartedEvent extends BaseEvent {
     required this.stepName,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.stepStarted);
 
   factory StepStartedEvent.fromJson(Map<String, dynamic> json) {
@@ -2030,7 +2015,9 @@ final class StepStartedEvent extends BaseEvent {
         'stepName',
         'step_name',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2045,11 +2032,15 @@ final class StepStartedEvent extends BaseEvent {
   StepStartedEvent copyWith({
     String? stepName,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return StepStartedEvent(
       stepName: stepName ?? this.stepName,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2063,6 +2054,8 @@ final class StepFinishedEvent extends BaseEvent {
     required this.stepName,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.stepFinished);
 
   factory StepFinishedEvent.fromJson(Map<String, dynamic> json) {
@@ -2072,7 +2065,9 @@ final class StepFinishedEvent extends BaseEvent {
         'stepName',
         'step_name',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2087,11 +2082,15 @@ final class StepFinishedEvent extends BaseEvent {
   StepFinishedEvent copyWith({
     String? stepName,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return StepFinishedEvent(
       stepName: stepName ?? this.stepName,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2180,6 +2179,8 @@ final class ReasoningStartEvent extends BaseEvent {
     required this.messageId,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.reasoningStart);
 
   factory ReasoningStartEvent.fromJson(Map<String, dynamic> json) {
@@ -2189,7 +2190,9 @@ final class ReasoningStartEvent extends BaseEvent {
         'messageId',
         'message_id',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2204,11 +2207,15 @@ final class ReasoningStartEvent extends BaseEvent {
   ReasoningStartEvent copyWith({
     String? messageId,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ReasoningStartEvent(
       messageId: messageId ?? this.messageId,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2224,6 +2231,8 @@ final class ReasoningMessageStartEvent extends BaseEvent {
     this.role = ReasoningMessageRole.reasoning,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.reasoningMessageStart);
 
   factory ReasoningMessageStartEvent.fromJson(Map<String, dynamic> json) {
@@ -2261,7 +2270,9 @@ final class ReasoningMessageStartEvent extends BaseEvent {
     return ReasoningMessageStartEvent(
       messageId: messageId,
       role: role,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2278,12 +2289,16 @@ final class ReasoningMessageStartEvent extends BaseEvent {
     String? messageId,
     ReasoningMessageRole? role,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ReasoningMessageStartEvent(
       messageId: messageId ?? this.messageId,
       role: role ?? this.role,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2299,6 +2314,8 @@ final class ReasoningMessageContentEvent extends BaseEvent {
     required this.delta,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.reasoningMessageContent);
 
   factory ReasoningMessageContentEvent.fromJson(Map<String, dynamic> json) {
@@ -2318,7 +2335,9 @@ final class ReasoningMessageContentEvent extends BaseEvent {
     return ReasoningMessageContentEvent(
       messageId: messageId,
       delta: delta,
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2335,12 +2354,16 @@ final class ReasoningMessageContentEvent extends BaseEvent {
     String? messageId,
     String? delta,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ReasoningMessageContentEvent(
       messageId: messageId ?? this.messageId,
       delta: delta ?? this.delta,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2354,6 +2377,8 @@ final class ReasoningMessageEndEvent extends BaseEvent {
     required this.messageId,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.reasoningMessageEnd);
 
   factory ReasoningMessageEndEvent.fromJson(Map<String, dynamic> json) {
@@ -2363,7 +2388,9 @@ final class ReasoningMessageEndEvent extends BaseEvent {
         'messageId',
         'message_id',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2378,11 +2405,15 @@ final class ReasoningMessageEndEvent extends BaseEvent {
   ReasoningMessageEndEvent copyWith({
     String? messageId,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ReasoningMessageEndEvent(
       messageId: messageId ?? this.messageId,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2398,6 +2429,8 @@ final class ReasoningMessageChunkEvent extends BaseEvent {
     this.delta,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.reasoningMessageChunk);
 
   factory ReasoningMessageChunkEvent.fromJson(Map<String, dynamic> json) {
@@ -2408,7 +2441,9 @@ final class ReasoningMessageChunkEvent extends BaseEvent {
         'message_id',
       ),
       delta: JsonDecoder.optionalField<String>(json, 'delta'),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2426,6 +2461,8 @@ final class ReasoningMessageChunkEvent extends BaseEvent {
     Object? messageId = kUnsetSentinel,
     Object? delta = kUnsetSentinel,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ReasoningMessageChunkEvent(
@@ -2434,6 +2471,8 @@ final class ReasoningMessageChunkEvent extends BaseEvent {
           : messageId as String?,
       delta: identical(delta, kUnsetSentinel) ? this.delta : delta as String?,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2447,6 +2486,8 @@ final class ReasoningEndEvent extends BaseEvent {
     required this.messageId,
     super.timestamp,
     super.rawEvent,
+    super.metadata,
+    super.subagentRunId,
   }) : super(eventType: EventType.reasoningEnd);
 
   factory ReasoningEndEvent.fromJson(Map<String, dynamic> json) {
@@ -2456,7 +2497,9 @@ final class ReasoningEndEvent extends BaseEvent {
         'messageId',
         'message_id',
       ),
-      timestamp: JsonDecoder.optionalIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       rawEvent: _readRawEvent(json),
     );
   }
@@ -2471,11 +2514,15 @@ final class ReasoningEndEvent extends BaseEvent {
   ReasoningEndEvent copyWith({
     String? messageId,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
     dynamic rawEvent,
   }) {
     return ReasoningEndEvent(
       messageId: messageId ?? this.messageId,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       rawEvent: rawEvent ?? this.rawEvent,
     );
   }
@@ -2565,6 +2612,8 @@ final class ReasoningEncryptedValueEvent extends BaseEvent {
     required this.entityId,
     required this.encryptedValue,
     super.timestamp,
+    super.metadata,
+    super.subagentRunId,
   }) : super(
           eventType: EventType.reasoningEncryptedValue,
           rawEvent: null,
@@ -2599,7 +2648,9 @@ final class ReasoningEncryptedValueEvent extends BaseEvent {
       subtype: subtype,
       entityId: entityId,
       encryptedValue: encryptedValue,
-      timestamp: JsonDecoder.optionalCipherSafeIntField(json, 'timestamp'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      subagentRunId: _readSubagentRunId(json),
       // rawEvent: omitted — constructor pins rawEvent: null in its super-initializer.
     );
   }
@@ -2626,6 +2677,8 @@ final class ReasoningEncryptedValueEvent extends BaseEvent {
     String? entityId,
     String? encryptedValue,
     int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    Object? subagentRunId = kUnsetSentinel,
   }) {
     // The three `?? this.field` reads are safe — unlike nullable fields that use
     // the kUnsetSentinel discipline elsewhere, these are required non-nullable
@@ -2637,7 +2690,225 @@ final class ReasoningEncryptedValueEvent extends BaseEvent {
       entityId: entityId ?? this.entityId,
       encryptedValue: encryptedValue ?? this.encryptedValue,
       timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      subagentRunId: _pick(subagentRunId, this.subagentRunId),
       // rawEvent: always null — enforced by the constructor's super-initializer.
+    );
+  }
+}
+
+// ============================================================================
+// Subagent Events
+// ============================================================================
+
+/// Reads the `subagentRunId` a subagent lifecycle event must carry.
+String _requireSubagentRunId(Map<String, dynamic> json) =>
+    JsonDecoder.requireEitherField<String>(
+      json,
+      'subagentRunId',
+      'subagent_run_id',
+    );
+
+/// Event announcing a subagent run that the run delegated work to.
+///
+/// Events that follow and carry the same [subagentRunId] belong to that
+/// subagent run, until its [SubagentFinishedEvent] or [SubagentErrorEvent].
+final class SubagentStartedEvent extends BaseEvent {
+  /// The subagent's name, as its capabilities declare it.
+  final String name;
+  final String? description;
+
+  /// The enclosing subagent run, when subagents nest.
+  final String? parentSubagentRunId;
+
+  /// The tool call that delegated to the subagent, when one did.
+  final String? parentToolCallId;
+
+  /// The message that delegated to the subagent, when one did.
+  final String? parentMessageId;
+
+  const SubagentStartedEvent({
+    required String super.subagentRunId,
+    required this.name,
+    this.description,
+    this.parentSubagentRunId,
+    this.parentToolCallId,
+    this.parentMessageId,
+    super.timestamp,
+    super.rawEvent,
+    super.metadata,
+  }) : super(eventType: EventType.subagentStarted);
+
+  factory SubagentStartedEvent.fromJson(Map<String, dynamic> json) {
+    return SubagentStartedEvent(
+      subagentRunId: _requireSubagentRunId(json),
+      name: JsonDecoder.requireField<String>(json, 'name'),
+      description: JsonDecoder.optionalStrictField<String>(json, 'description'),
+      parentSubagentRunId: JsonDecoder.optionalStrictField<String>(
+        json,
+        'parentSubagentRunId',
+      ),
+      parentToolCallId:
+          JsonDecoder.optionalStrictField<String>(json, 'parentToolCallId'),
+      parentMessageId:
+          JsonDecoder.optionalStrictField<String>(json, 'parentMessageId'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      rawEvent: _readRawEvent(json),
+    );
+  }
+
+  @override
+  String get subagentRunId => super.subagentRunId!;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'name': name,
+        if (description != null) 'description': description,
+        if (parentSubagentRunId != null)
+          'parentSubagentRunId': parentSubagentRunId,
+        if (parentToolCallId != null) 'parentToolCallId': parentToolCallId,
+        if (parentMessageId != null) 'parentMessageId': parentMessageId,
+      };
+
+  @override
+  SubagentStartedEvent copyWith({
+    String? subagentRunId,
+    String? name,
+    Object? description = kUnsetSentinel,
+    Object? parentSubagentRunId = kUnsetSentinel,
+    Object? parentToolCallId = kUnsetSentinel,
+    Object? parentMessageId = kUnsetSentinel,
+    int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    dynamic rawEvent,
+  }) {
+    return SubagentStartedEvent(
+      subagentRunId: subagentRunId ?? this.subagentRunId,
+      name: name ?? this.name,
+      description: _pick(description, this.description),
+      parentSubagentRunId: _pick(parentSubagentRunId, this.parentSubagentRunId),
+      parentToolCallId: _pick(parentToolCallId, this.parentToolCallId),
+      parentMessageId: _pick(parentMessageId, this.parentMessageId),
+      timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      rawEvent: rawEvent ?? this.rawEvent,
+    );
+  }
+}
+
+/// Event closing a subagent run that finished without failing.
+final class SubagentFinishedEvent extends BaseEvent {
+  /// What the subagent produced, any JSON.
+  final dynamic result;
+
+  /// How the subagent run finished. Absent reads as success.
+  final SubagentFinishedOutcome? outcome;
+
+  const SubagentFinishedEvent({
+    required String super.subagentRunId,
+    this.result,
+    this.outcome,
+    super.timestamp,
+    super.rawEvent,
+    super.metadata,
+  }) : super(eventType: EventType.subagentFinished);
+
+  factory SubagentFinishedEvent.fromJson(Map<String, dynamic> json) {
+    return SubagentFinishedEvent(
+      subagentRunId: _requireSubagentRunId(json),
+      result: json['result'],
+      outcome: _readOutcome(json, SubagentFinishedOutcome.fromJson),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      rawEvent: _readRawEvent(json),
+    );
+  }
+
+  @override
+  String get subagentRunId => super.subagentRunId!;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        if (result != null) 'result': result,
+        if (outcome != null) 'outcome': outcome!.toJson(),
+      };
+
+  @override
+  SubagentFinishedEvent copyWith({
+    String? subagentRunId,
+    Object? result = kUnsetSentinel,
+    Object? outcome = kUnsetSentinel,
+    int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    dynamic rawEvent,
+  }) {
+    return SubagentFinishedEvent(
+      subagentRunId: subagentRunId ?? this.subagentRunId,
+      result: _pick(result, this.result),
+      outcome: _pick(outcome, this.outcome),
+      timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      rawEvent: rawEvent ?? this.rawEvent,
+    );
+  }
+}
+
+/// Event closing a subagent run that failed. The parent run continues.
+final class SubagentErrorEvent extends BaseEvent {
+  final String message;
+
+  /// Optional machine-readable error code.
+  final String? code;
+
+  const SubagentErrorEvent({
+    required String super.subagentRunId,
+    required this.message,
+    this.code,
+    super.timestamp,
+    super.rawEvent,
+    super.metadata,
+  }) : super(eventType: EventType.subagentError);
+
+  factory SubagentErrorEvent.fromJson(Map<String, dynamic> json) {
+    return SubagentErrorEvent(
+      subagentRunId: _requireSubagentRunId(json),
+      message: JsonDecoder.requireField<String>(json, 'message'),
+      code: JsonDecoder.optionalStrictField<String>(json, 'code'),
+      timestamp: _readTimestamp(json),
+      metadata: _readMetadata(json),
+      rawEvent: _readRawEvent(json),
+    );
+  }
+
+  @override
+  String get subagentRunId => super.subagentRunId!;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'message': message,
+        if (code != null) 'code': code,
+      };
+
+  @override
+  SubagentErrorEvent copyWith({
+    String? subagentRunId,
+    String? message,
+    Object? code = kUnsetSentinel,
+    int? timestamp,
+    Object? metadata = kUnsetSentinel,
+    dynamic rawEvent,
+  }) {
+    return SubagentErrorEvent(
+      subagentRunId: subagentRunId ?? this.subagentRunId,
+      message: message ?? this.message,
+      code: _pick(code, this.code),
+      timestamp: timestamp ?? this.timestamp,
+      metadata: _pick(metadata, this.metadata),
+      rawEvent: rawEvent ?? this.rawEvent,
     );
   }
 }

@@ -9,24 +9,11 @@ void main() {
           EventType.textMessageContent.value, equals('TEXT_MESSAGE_CONTENT'));
       expect(EventType.textMessageEnd.value, equals('TEXT_MESSAGE_END'));
       expect(EventType.textMessageChunk.value, equals('TEXT_MESSAGE_CHUNK'));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.thinkingTextMessageStart.value,
-          equals('THINKING_TEXT_MESSAGE_START'));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.thinkingTextMessageContent.value,
-          equals('THINKING_TEXT_MESSAGE_CONTENT'));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.thinkingTextMessageEnd.value,
-          equals('THINKING_TEXT_MESSAGE_END'));
       expect(EventType.toolCallStart.value, equals('TOOL_CALL_START'));
       expect(EventType.toolCallArgs.value, equals('TOOL_CALL_ARGS'));
       expect(EventType.toolCallEnd.value, equals('TOOL_CALL_END'));
       expect(EventType.toolCallChunk.value, equals('TOOL_CALL_CHUNK'));
       expect(EventType.toolCallResult.value, equals('TOOL_CALL_RESULT'));
-      expect(EventType.thinkingStart.value, equals('THINKING_START'));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.thinkingContent.value, equals('THINKING_CONTENT'));
-      expect(EventType.thinkingEnd.value, equals('THINKING_END'));
       expect(EventType.stateSnapshot.value, equals('STATE_SNAPSHOT'));
       expect(EventType.stateDelta.value, equals('STATE_DELTA'));
       expect(EventType.messagesSnapshot.value, equals('MESSAGES_SNAPSHOT'));
@@ -72,15 +59,6 @@ void main() {
           equals(EventType.textMessageEnd));
       expect(EventType.fromString('TEXT_MESSAGE_CHUNK'),
           equals(EventType.textMessageChunk));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.fromString('THINKING_TEXT_MESSAGE_START'),
-          equals(EventType.thinkingTextMessageStart));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.fromString('THINKING_TEXT_MESSAGE_CONTENT'),
-          equals(EventType.thinkingTextMessageContent));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.fromString('THINKING_TEXT_MESSAGE_END'),
-          equals(EventType.thinkingTextMessageEnd));
       expect(EventType.fromString('TOOL_CALL_START'),
           equals(EventType.toolCallStart));
       expect(EventType.fromString('TOOL_CALL_ARGS'),
@@ -91,13 +69,6 @@ void main() {
           equals(EventType.toolCallChunk));
       expect(EventType.fromString('TOOL_CALL_RESULT'),
           equals(EventType.toolCallResult));
-      expect(EventType.fromString('THINKING_START'),
-          equals(EventType.thinkingStart));
-      // ignore: deprecated_member_use_from_same_package
-      expect(EventType.fromString('THINKING_CONTENT'),
-          equals(EventType.thinkingContent));
-      expect(
-          EventType.fromString('THINKING_END'), equals(EventType.thinkingEnd));
       expect(EventType.fromString('STATE_SNAPSHOT'),
           equals(EventType.stateSnapshot));
       expect(EventType.fromString('STATE_DELTA'), equals(EventType.stateDelta));
@@ -165,7 +136,7 @@ void main() {
     });
 
     test('values list contains all event types', () {
-      expect(EventType.values.length, equals(34));
+      expect(EventType.values.length, equals(31));
 
       // Verify specific important event types are included
       expect(EventType.values, contains(EventType.textMessageStart));
@@ -225,7 +196,7 @@ void main() {
     test('enum supports index property', () {
       expect(EventType.textMessageStart.index, equals(0));
       expect(
-        EventType.reasoningEncryptedValue.index,
+        EventType.subagentError.index,
         equals(EventType.values.length - 1),
       );
     });
@@ -268,22 +239,26 @@ void main() {
         }
       });
 
-      test('thinking events are grouped correctly', () {
-        final thinkingEvents = [
-          EventType.thinkingStart,
-          // ignore: deprecated_member_use_from_same_package
-          EventType.thinkingContent,
-          EventType.thinkingEnd,
-          // ignore: deprecated_member_use_from_same_package
-          EventType.thinkingTextMessageStart,
-          // ignore: deprecated_member_use_from_same_package
-          EventType.thinkingTextMessageContent,
-          // ignore: deprecated_member_use_from_same_package
-          EventType.thinkingTextMessageEnd,
-        ];
+      test('THINKING_* event types are gone in protocol 1.0', () {
+        for (final retired in [
+          'THINKING_START',
+          'THINKING_END',
+          'THINKING_CONTENT',
+          'THINKING_TEXT_MESSAGE_START',
+          'THINKING_TEXT_MESSAGE_CONTENT',
+          'THINKING_TEXT_MESSAGE_END',
+        ]) {
+          expect(() => EventType.fromString(retired), throwsArgumentError);
+        }
+      });
 
-        for (final event in thinkingEvents) {
-          expect(event.value, contains('THINKING'));
+      test('subagent events are grouped correctly', () {
+        for (final event in [
+          EventType.subagentStarted,
+          EventType.subagentFinished,
+          EventType.subagentError,
+        ]) {
+          expect(event.value, startsWith('SUBAGENT_'));
         }
       });
 

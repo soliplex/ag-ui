@@ -98,9 +98,7 @@ void main() {
             .map((e) => decoder.decodeJson(e as Map<String, dynamic>))
             .toList();
 
-        final snapshot = decodedEvents
-            .whereType<MessagesSnapshotEvent>()
-            .first;
+        final snapshot = decodedEvents.whereType<MessagesSnapshotEvent>().first;
         expect(snapshot.messages.length, equals(4));
 
         // Check message types
@@ -121,10 +119,10 @@ void main() {
         expect(body, isA<MultimodalContent>());
         final parts = (body as MultimodalContent).parts;
         expect(parts.length, equals(2));
-        expect(parts[0], isA<TextInputContent>());
-        expect((parts[0] as TextInputContent).text, equals('Describe this image'));
-        expect(parts[1], isA<ImageInputContent>());
-        expect((parts[1] as ImageInputContent).source, isA<UrlSource>());
+        expect(parts[0], isA<TextPart>());
+        expect((parts[0] as TextPart).text, equals('Describe this image'));
+        expect(parts[1], isA<ImagePart>());
+        expect((parts[1] as ImagePart).source, isA<UrlSource>());
         // Plain-text projection getter is null for multimodal content.
         expect(multimodalMsg.content, isNull);
       });
@@ -200,31 +198,6 @@ void main() {
 
         // Verify same thread ID
         expect(runStarts[0].threadId, equals(runStarts[1].threadId));
-      });
-
-      test('processes thinking events', () {
-        final events = fixtures['thinking_events'] as List;
-        final decodedEvents = events
-            .map((e) => decoder.decodeJson(e as Map<String, dynamic>))
-            .toList();
-
-        final thinkingStart =
-            decodedEvents.whereType<ThinkingStartEvent>().first;
-        expect(thinkingStart.title, equals('Analyzing request'));
-
-        // Decoding still emits the (deprecated) ThinkingContentEvent for
-        // backward compatibility until removal. See [ThinkingContentEvent].
-        // ignore: deprecated_member_use_from_same_package
-        final thinkingEvents = decodedEvents
-            // ignore: deprecated_member_use_from_same_package
-            .whereType<ThinkingContentEvent>()
-            .toList();
-        expect(thinkingEvents.length, equals(2));
-
-        // Extract delta from the events
-        final fullContent = thinkingEvents.map((e) => e.delta).join();
-        expect(fullContent, contains('Let me think about this'));
-        expect(fullContent, contains('The user is asking about'));
       });
 
       test('processes step events', () {
@@ -361,28 +334,6 @@ void main() {
           decodedEvents.whereType<ReasoningEndEvent>().length,
           equals(1),
         );
-      });
-
-      // TODO(1.0.0): Delete this fixture group alongside the
-      // THINKING_TEXT_MESSAGE_* deprecation sweep.
-      test('processes deprecated thinking_text_message_legacy events', () {
-        final events = fixtures['thinking_text_message_legacy'] as List;
-        // ignore: deprecated_member_use_from_same_package
-        final decodedEvents = events
-            .map((e) => decoder.decodeJson(e as Map<String, dynamic>))
-            .toList();
-
-        expect(decodedEvents[0], isA<RunStartedEvent>());
-        // ignore: deprecated_member_use_from_same_package
-        expect(decodedEvents[1], isA<ThinkingTextMessageStartEvent>());
-        // ignore: deprecated_member_use_from_same_package
-        expect(decodedEvents[2], isA<ThinkingTextMessageContentEvent>());
-        // ignore: deprecated_member_use_from_same_package
-        expect((decodedEvents[2] as ThinkingTextMessageContentEvent).delta,
-            equals('Let me think...'));
-        // ignore: deprecated_member_use_from_same_package
-        expect(decodedEvents[3], isA<ThinkingTextMessageEndEvent>());
-        expect(decodedEvents[4], isA<RunFinishedEvent>());
       });
     });
 
@@ -659,14 +610,11 @@ void main() {
         // silently dropped fields that intentionally serialize as `null`.
         // The factories below all REQUIRE the key to be present (an absent
         // key raises `AGUIValidationError`), so the round-trip would fail
-        // with `DecodingError(field: 'content' | 'event' | 'value')`. The
+        // with `DecodingError(field: 'event' | 'value' | 'snapshot')`. The
         // post-fix encoder leaves the toJson output untouched.
+        // (`ACTIVITY_SNAPSHOT.content` must be a JSON object since 1.0, so
+        // it can no longer be null.)
         final originals = <BaseEvent>[
-          ActivitySnapshotEvent(
-            messageId: 'm',
-            activityType: 't',
-            content: null,
-          ),
           RawEvent(event: null),
           CustomEvent(name: 'evt', value: null),
           StateSnapshotEvent(snapshot: null),
@@ -682,16 +630,13 @@ void main() {
           );
         }
 
-        final activity = decoder.decodeSSE(encoder.encodeSSE(originals[0]))
-            as ActivitySnapshotEvent;
-        expect(activity.content, isNull);
         final raw =
-            decoder.decodeSSE(encoder.encodeSSE(originals[1])) as RawEvent;
+            decoder.decodeSSE(encoder.encodeSSE(originals[0])) as RawEvent;
         expect(raw.event, isNull);
         final custom =
-            decoder.decodeSSE(encoder.encodeSSE(originals[2])) as CustomEvent;
+            decoder.decodeSSE(encoder.encodeSSE(originals[1])) as CustomEvent;
         expect(custom.value, isNull);
-        final snapshot = decoder.decodeSSE(encoder.encodeSSE(originals[3]))
+        final snapshot = decoder.decodeSSE(encoder.encodeSSE(originals[2]))
             as StateSnapshotEvent;
         expect(snapshot.snapshot, isNull);
       });

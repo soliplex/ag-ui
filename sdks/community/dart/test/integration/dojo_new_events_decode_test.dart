@@ -56,7 +56,7 @@ void main() {
       final e = event as ActivitySnapshotEvent;
       expect(e.messageId, equals('act-001'));
       expect(e.activityType, equals('task.run'));
-      expect((e.content! as Map)['title'], equals('Hello'));
+      expect(e.content['title'], equals('Hello'));
       expect(e.replace, isFalse);
     });
 
@@ -65,7 +65,7 @@ void main() {
         'type': 'ACTIVITY_SNAPSHOT',
         'message_id': 'act-002',
         'activity_type': 'task.run',
-        'content': null,
+        'content': <String, dynamic>{},
       });
       expect(event, isA<ActivitySnapshotEvent>());
       final e = event as ActivitySnapshotEvent;
@@ -89,7 +89,7 @@ void main() {
           expect(b.messageId, equals(a.messageId));
           expect(b.activityType, equals(a.activityType));
           expect(b.replace, equals(a.replace));
-          expect((b.content! as Map)['done'], isTrue);
+          expect(b.content['done'], isTrue);
         },
       );
     });
@@ -100,7 +100,7 @@ void main() {
         'type': 'ACTIVITY_SNAPSHOT',
         'messageId': 'act-004',
         'activityType': 'status',
-        'content': 'ok',
+        'content': {'status': 'ok'},
       }) as ActivitySnapshotEvent;
       expect(event.replace, isTrue);
       final json = event.toJson();
@@ -398,8 +398,7 @@ void main() {
       expect(json['messageId'], equals('rsn-msg-003'));
       expect(json['delta'], equals('step'));
 
-      final reDecoded =
-          decoder.decodeJson(json) as ReasoningMessageChunkEvent;
+      final reDecoded = decoder.decodeJson(json) as ReasoningMessageChunkEvent;
       expect(reDecoded.messageId, equals(event.messageId));
       expect(reDecoded.delta, equals(event.delta));
     });
@@ -696,7 +695,8 @@ void main() {
       },
     );
 
-    test('groupRelatedEvents groups REASONING_MESSAGE_* by messageId', () async {
+    test('groupRelatedEvents groups REASONING_MESSAGE_* by messageId',
+        () async {
       final source = Stream<BaseEvent>.fromIterable([
         const ReasoningStartEvent(messageId: 'rsn-g-001'),
         const ReasoningMessageStartEvent(messageId: 'rsn-g-001'),
@@ -753,7 +753,7 @@ void main() {
 
       final snap = events[0] as ActivitySnapshotEvent;
       expect(snap.messageId, equals('act-list-001'));
-      expect((snap.content! as Map)['status'], equals('started'));
+      expect(snap.content['status'], equals('started'));
 
       final delta = events[1] as ActivityDeltaEvent;
       expect(delta.patch[0]['value'], equals('done'));

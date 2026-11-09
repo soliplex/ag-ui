@@ -1,52 +1,17 @@
 /// Event type enumeration for AG-UI protocol.
 library;
 
-// Hoisted `@Deprecated` messages: each is referenced exactly once below,
-// but the long form is repeated again in `events.dart` per event class.
-// Centralizing lets the planned-removal version (1.0.0) get edited in one
-// place per surface (enum value vs. event class) instead of drifting.
-const String _kThinkingTextMessageStartEnumDeprecation =
-    'Use reasoningMessageStart (ReasoningMessageStartEvent) instead. '
-    'Mirrors the canonical TypeScript SDK deprecation of '
-    'THINKING_TEXT_MESSAGE_* in favor of REASONING_*. '
-    'Scheduled for removal in 1.0.0.';
-const String _kThinkingTextMessageContentEnumDeprecation =
-    'Use reasoningMessageContent (ReasoningMessageContentEvent) instead. '
-    'Mirrors the canonical TypeScript SDK deprecation of '
-    'THINKING_TEXT_MESSAGE_* in favor of REASONING_*. '
-    'Scheduled for removal in 1.0.0.';
-const String _kThinkingTextMessageEndEnumDeprecation =
-    'Use reasoningMessageEnd (ReasoningMessageEndEvent) instead. '
-    'Mirrors the canonical TypeScript SDK deprecation of '
-    'THINKING_TEXT_MESSAGE_* in favor of REASONING_*. '
-    'Scheduled for removal in 1.0.0.';
-const String _kThinkingContentEnumDeprecation =
-    'Dart-only legacy: never part of the canonical AG-UI protocol '
-    '(TypeScript/Python). '
-    'Use reasoningMessageContent (ReasoningMessageContentEvent) instead. '
-    'Scheduled for removal in 1.0.0.';
-
 /// Enumeration of all AG-UI event types
 enum EventType {
   textMessageStart('TEXT_MESSAGE_START'),
   textMessageContent('TEXT_MESSAGE_CONTENT'),
   textMessageEnd('TEXT_MESSAGE_END'),
   textMessageChunk('TEXT_MESSAGE_CHUNK'),
-  @Deprecated(_kThinkingTextMessageStartEnumDeprecation)
-  thinkingTextMessageStart('THINKING_TEXT_MESSAGE_START'),
-  @Deprecated(_kThinkingTextMessageContentEnumDeprecation)
-  thinkingTextMessageContent('THINKING_TEXT_MESSAGE_CONTENT'),
-  @Deprecated(_kThinkingTextMessageEndEnumDeprecation)
-  thinkingTextMessageEnd('THINKING_TEXT_MESSAGE_END'),
   toolCallStart('TOOL_CALL_START'),
   toolCallArgs('TOOL_CALL_ARGS'),
   toolCallEnd('TOOL_CALL_END'),
   toolCallChunk('TOOL_CALL_CHUNK'),
   toolCallResult('TOOL_CALL_RESULT'),
-  thinkingStart('THINKING_START'),
-  @Deprecated(_kThinkingContentEnumDeprecation)
-  thinkingContent('THINKING_CONTENT'),
-  thinkingEnd('THINKING_END'),
   stateSnapshot('STATE_SNAPSHOT'),
   stateDelta('STATE_DELTA'),
   messagesSnapshot('MESSAGES_SNAPSHOT'),
@@ -65,7 +30,10 @@ enum EventType {
   reasoningMessageEnd('REASONING_MESSAGE_END'),
   reasoningMessageChunk('REASONING_MESSAGE_CHUNK'),
   reasoningEnd('REASONING_END'),
-  reasoningEncryptedValue('REASONING_ENCRYPTED_VALUE');
+  reasoningEncryptedValue('REASONING_ENCRYPTED_VALUE'),
+  subagentStarted('SUBAGENT_STARTED'),
+  subagentFinished('SUBAGENT_FINISHED'),
+  subagentError('SUBAGENT_ERROR');
 
   final String value;
   const EventType(this.value);

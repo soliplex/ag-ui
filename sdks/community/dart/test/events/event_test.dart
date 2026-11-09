@@ -498,8 +498,7 @@ void main() {
       expect(
         event.rawEvent,
         isNull,
-        reason:
-            'rawEvent must be scrubbed when ActivityMessage carries '
+        reason: 'rawEvent must be scrubbed when ActivityMessage carries '
             'wire-level encryptedValue',
       );
       final emitted = event.toJson();
@@ -1037,14 +1036,22 @@ void main() {
             'input': {
               'runId': 'r',
               'threadId': 't',
-              'messages': [{'id': 123, 'role': 'user', 'content': 'hi', 'encryptedValue': 'cipher'}],
+              'messages': [
+                {
+                  'id': 123,
+                  'role': 'user',
+                  'content': 'hi',
+                  'encryptedValue': 'cipher'
+                }
+              ],
               'tools': [],
               'context': [],
               'forwardedProps': {},
               'state': {},
             },
           }),
-          throwsA(isA<AGUIValidationError>().having((e) => e.json, 'json', isNull)),
+          throwsA(
+              isA<AGUIValidationError>().having((e) => e.json, 'json', isNull)),
         );
       });
     });
@@ -1060,7 +1067,7 @@ void main() {
           },
           {'type': 'STATE_SNAPSHOT', 'snapshot': {}},
           {'type': 'RUN_STARTED', 'threadId': 'thread_001', 'runId': 'run_001'},
-          {'type': 'THINKING_START'},
+          {'type': 'REASONING_START', 'messageId': 'r1'},
           {'type': 'CUSTOM', 'name': 'my_event', 'value': 'data'},
         ];
 
@@ -1071,7 +1078,7 @@ void main() {
         expect(events[1], isA<ToolCallStartEvent>());
         expect(events[2], isA<StateSnapshotEvent>());
         expect(events[3], isA<RunStartedEvent>());
-        expect(events[4], isA<ThinkingStartEvent>());
+        expect(events[4], isA<ReasoningStartEvent>());
         expect(events[5], isA<CustomEvent>());
       });
 
@@ -1108,12 +1115,6 @@ void main() {
           TextMessageContentEvent(messageId: 'm', delta: 'd'),
           TextMessageEndEvent(messageId: 'm'),
           TextMessageChunkEvent(),
-          // ignore: deprecated_member_use_from_same_package
-          ThinkingTextMessageStartEvent(),
-          // ignore: deprecated_member_use_from_same_package
-          ThinkingTextMessageContentEvent(delta: 'd'),
-          // ignore: deprecated_member_use_from_same_package
-          ThinkingTextMessageEndEvent(),
           ToolCallStartEvent(toolCallId: 'c', toolCallName: 'n'),
           ToolCallArgsEvent(toolCallId: 'c', delta: 'd'),
           ToolCallEndEvent(toolCallId: 'c'),
@@ -1123,15 +1124,13 @@ void main() {
             toolCallId: 'c',
             content: 'ok',
           ),
-          ThinkingStartEvent(),
-          ThinkingEndEvent(),
           StateSnapshotEvent(snapshot: <String, dynamic>{}),
           StateDeltaEvent(delta: const []),
           MessagesSnapshotEvent(messages: const []),
           ActivitySnapshotEvent(
             messageId: 'm',
             activityType: 't',
-            content: null,
+            content: const {},
           ),
           ActivityDeltaEvent(
             messageId: 'm',
@@ -1156,6 +1155,9 @@ void main() {
             entityId: 'e',
             encryptedValue: 'v',
           ),
+          SubagentStartedEvent(subagentRunId: 's', name: 'n'),
+          SubagentFinishedEvent(subagentRunId: 's'),
+          SubagentErrorEvent(subagentRunId: 's', message: 'm'),
         ];
 
         for (final e in samples) {
@@ -1167,74 +1169,18 @@ void main() {
           );
         }
 
-        // Sanity: the sample list covers every non-deprecated EventType.
-        // `thinkingContent` is intentionally excluded: it is the only
-        // Dart-only legacy event type (no protocol-level wire value), so it
-        // gets its own dedicated round-trip test ('deprecated
-        // ThinkingContentEvent still round-trips') rather than sharing this
-        // sample list. Keeping the deprecation surface narrow makes the 1.0.0
-        // removal sweep a single-file edit.
+        // Sanity: the sample list covers every EventType.
         final coveredTypes = samples.map((e) => e.eventType).toSet();
-        // ignore: deprecated_member_use_from_same_package
-        final expectedTypes = EventType.values.toSet()
-          ..remove(EventType.thinkingContent);
-        expect(coveredTypes, equals(expectedTypes));
+        expect(coveredTypes, equals(EventType.values.toSet()));
       });
     });
 
-    group('ThinkingEvents', () {
-      test('ThinkingStartEvent with title', () {
-        final event = ThinkingStartEvent(title: 'Processing request');
-
-        final json = event.toJson();
-        expect(json['type'], 'THINKING_START');
-        expect(json['title'], 'Processing request');
-
-        final decoded = ThinkingStartEvent.fromJson(json);
-        expect(decoded.title, 'Processing request');
-      });
-
-      test('ThinkingTextMessageContentEvent accepts empty delta', () {
-        // Relaxed to match canonical `z.string()` contract — empty `delta`
-        // is now accepted. Migrate to [ReasoningMessageContentEvent].
-        final json = {
-          'type': 'THINKING_TEXT_MESSAGE_CONTENT',
-          'delta': '',
-        };
-
-        // ignore: deprecated_member_use_from_same_package
-        final event = ThinkingTextMessageContentEvent.fromJson(json);
-        expect(event.delta, isEmpty);
-      });
-
-      test('deprecated ThinkingContentEvent still round-trips', () {
-        // Locks in the backward-compat contract on the deprecation:
-        // decoding/encoding must keep working until the planned removal.
-        // ignore: deprecated_member_use_from_same_package
-        final original = ThinkingContentEvent(delta: 'still works');
-        final json = original.toJson();
-        expect(json['type'], 'THINKING_CONTENT');
-        expect(json['delta'], 'still works');
-
-        // ignore: deprecated_member_use_from_same_package
-        final decoded = ThinkingContentEvent.fromJson(json);
-        expect(decoded.delta, 'still works');
-      });
-
-      test('EventDecoder still decodes deprecated THINKING_CONTENT', () {
-        // Backs the CHANGELOG promise that the deprecated path remains
-        // decodable end-to-end through the public decoder boundary.
-        const decoder = EventDecoder();
-
-        final event = decoder.decodeJson({
-          'type': 'THINKING_CONTENT',
-          'delta': 'legacy payload',
-        });
-
-        // ignore: deprecated_member_use_from_same_package
-        expect(event, isA<ThinkingContentEvent>());
-        // ignore: deprecated_member_use_from_same_package
-        expect((event as ThinkingContentEvent).delta, 'legacy payload');
+    group('Retired THINKING_* events', () {
+      test('are unknown event types in protocol 1.0', () {
+        expect(
+          () => BaseEvent.fromJson({'type': 'THINKING_CONTENT', 'delta': 'x'}),
+          throwsA(isA<AGUIValidationError>()),
+        );
       });
     });
 
@@ -1416,7 +1362,7 @@ void main() {
         final defaultEvent = ActivitySnapshotEvent(
           messageId: 'm',
           activityType: 't',
-          content: null,
+          content: const {},
         );
         expect(defaultEvent.replace, isTrue);
         expect(defaultEvent.toJson().containsKey('replace'), isFalse,
@@ -1425,7 +1371,7 @@ void main() {
         final replaceEvent = ActivitySnapshotEvent(
           messageId: 'm',
           activityType: 't',
-          content: null,
+          content: const {},
           replace: false,
         );
         expect(replaceEvent.toJson()['replace'], isFalse,
@@ -1443,7 +1389,7 @@ void main() {
           'type': 'ACTIVITY_SNAPSHOT',
           'messageId': 'msg_001',
           'activityType': 'task.run',
-          'content': null,
+          'content': <String, dynamic>{},
           'replace': null,
         });
         expect(decoded.replace, isTrue);
@@ -1454,14 +1400,14 @@ void main() {
           'type': 'ACTIVITY_SNAPSHOT',
           'message_id': 'msg_002',
           'activity_type': 'task.run',
-          'content': 'hello',
+          'content': {'text': 'hello'},
           'replace': true,
         };
 
         final decoded = ActivitySnapshotEvent.fromJson(pythonJson);
         expect(decoded.messageId, 'msg_002');
         expect(decoded.activityType, 'task.run');
-        expect(decoded.content, 'hello');
+        expect(decoded.content, {'text': 'hello'});
         expect(decoded.replace, true);
       });
 
@@ -1510,10 +1456,10 @@ void main() {
           'type': 'ACTIVITY_SNAPSHOT',
           'messageId': 'm',
           'activityType': 't',
-          'content': null,
+          'content': <String, dynamic>{},
         });
         expect(snapshot, isA<ActivitySnapshotEvent>());
-        expect((snapshot as ActivitySnapshotEvent).content, isNull);
+        expect((snapshot as ActivitySnapshotEvent).content, isEmpty);
 
         final delta = BaseEvent.fromJson({
           'type': 'ACTIVITY_DELTA',
@@ -1525,10 +1471,6 @@ void main() {
       });
 
       test('ActivitySnapshotEvent rejects missing content key', () {
-        // Mirrors the `StateSnapshotEvent` / `RawEvent` contract: the
-        // payload field may be any JSON shape (including `null`) but the
-        // KEY must be present. Distinguishing missing-key from
-        // explicit-null is the whole point of this check.
         expect(
           () => ActivitySnapshotEvent.fromJson({
             'type': 'ACTIVITY_SNAPSHOT',
@@ -1539,24 +1481,24 @@ void main() {
         );
       });
 
-      test('ActivitySnapshotEvent accepts explicit-null content', () {
-        // The companion to "rejects missing content key": an explicit
-        // `null` is a valid wire payload (Python's `content: Any`
-        // permits None) and must round-trip without error.
-        final decoded = ActivitySnapshotEvent.fromJson({
-          'type': 'ACTIVITY_SNAPSHOT',
-          'messageId': 'msg_001',
-          'activityType': 'task.run',
-          'content': null,
-        });
-        expect(decoded.content, isNull);
+      test('ActivitySnapshotEvent rejects content that is not an object', () {
+        // Protocol 1.0 requires `content` to be a JSON object.
+        for (final content in [null, 'text', 42, <dynamic>[]]) {
+          expect(
+            () => ActivitySnapshotEvent.fromJson({
+              'type': 'ACTIVITY_SNAPSHOT',
+              'messageId': 'msg_001',
+              'activityType': 'task.run',
+              'content': content,
+            }),
+            throwsA(isA<AGUIValidationError>()),
+            reason: 'content: $content',
+          );
+        }
       });
 
-      test('ActivitySnapshotEvent.copyWith(content: null) clears content', () {
-        // The factory contract permits explicit-null `content`, and so
-        // must `copyWith` — distinguishing "argument omitted" from
-        // "argument explicitly set to null" via the
-        // `_unsetCopyWith` sentinel.
+      test('ActivitySnapshotEvent.copyWith replaces or keeps content', () {
+        // `content` is a required JSON object, so it cannot be cleared.
         final original = ActivitySnapshotEvent(
           messageId: 'msg_001',
           activityType: 'task.run',
@@ -1566,9 +1508,8 @@ void main() {
         final keep = original.copyWith();
         expect(keep.content, equals({'progress': 0.25}));
 
-        // Explicit-null clears the content.
-        final cleared = original.copyWith(content: null);
-        expect(cleared.content, isNull);
+        final replaced = original.copyWith(content: {'progress': 1});
+        expect(replaced.content, equals({'progress': 1}));
       });
 
       test('ActivitySnapshotEvent rejects missing messageId', () {
@@ -1619,13 +1560,13 @@ void main() {
         final original = ActivitySnapshotEvent(
           messageId: 'msg_001',
           activityType: 'task.run',
-          content: 'original',
+          content: const {'v': 'original'},
         );
 
-        final updated = original.copyWith(content: 'new');
+        final updated = original.copyWith(content: const {'v': 'new'});
         expect(updated.messageId, original.messageId);
         expect(updated.activityType, original.activityType);
-        expect(updated.content, 'new');
+        expect(updated.content, const {'v': 'new'});
         expect(updated.replace, original.replace);
       });
     });

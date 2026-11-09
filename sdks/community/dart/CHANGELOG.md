@@ -5,6 +5,81 @@ All notable changes to the AG-UI Dart SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0]
+
+Tracks AG-UI protocol 1.0. Every document in the specification's fixture
+corpus (`spec/1.0/fixtures`) now runs through the codec in
+`test/spec/fixtures_test.dart`: valid documents decode and encode back to
+themselves, and invalid ones are rejected, except the eleven listed there that
+this SDK accepts on purpose, each with its reason.
+
+### Breaking Changes
+- **The `THINKING_*` events are gone**: `ThinkingStartEvent`,
+  `ThinkingEndEvent`, `ThinkingTextMessageStartEvent`,
+  `ThinkingTextMessageContentEvent`, `ThinkingTextMessageEndEvent`, the
+  Dart-only `ThinkingContentEvent`, and their `EventType` values. Protocol 1.0
+  retired them in favour of `REASONING_*`. A stream carrying one now fails to
+  decode as an unknown event type.
+- **The `binary` content part is gone** (`BinaryInputContent`). Protocol 1.0
+  rejects it, and so does `ContentPart.fromJson`. Send a media part with a
+  source instead.
+- **`ToolMessage.content` and `ToolCallResultEvent.content` may be a list of
+  parts**, as `UserMessage.content` already could. Both now hold a
+  `messageContent` (`TextContent` or `MultimodalContent`); `content` is a
+  getter returning the text, with the text parts joined for a list. The
+  `content:` string constructors still work but are no longer `const`; use
+  `ToolMessage.fromContent` / `ToolCallResultEvent.fromContent` for parts.
+- **`TextMessageStartEvent.role` is nullable and has no default.** 1.0
+  removed the `assistant` default, so an absent role decodes as `null` and is
+  omitted on encode.
+- **`ActivitySnapshotEvent.content` is a `Map<String, dynamic>`**, as 1.0
+  requires an object. Any other shape is rejected at decode.
+- **`timestamp` must be a whole number within ±(2^53 - 1).** A fractional
+  value is rejected instead of being floored; a whole-valued double (as every
+  number arrives on the web) is still accepted.
+- **JSON Patch operations are validated** on `STATE_DELTA` and
+  `ACTIVITY_DELTA`: a known `op`, a JSON Pointer `path`, a `from` for `move`
+  and `copy`, and a `value` for `add`, `replace` and `test`.
+- **`RunAgentInput.tools` and `.context` default to empty** and may be absent
+  on the wire. `toJson` still writes both, because a 0.x Python agent requires
+  them.
+
+### Added
+- `metadata` on every event, message, `ToolCall` and part, and `id` on every
+  part. A `null` `metadata` is rejected, as the specification says.
+- `subagentRunId` on every attributable event and every message, and the
+  subagent lifecycle events `SubagentStartedEvent`, `SubagentFinishedEvent`
+  and `SubagentErrorEvent`.
+- `RunFinishedEvent.outcome` (`RunFinishedSuccessOutcome`,
+  `RunFinishedInterruptOutcome`, `RunFinishedCancelledOutcome`), `Interrupt`,
+  and `RunAgentInput.resume` (`ResumeEntry`) for interrupt and resume.
+- `usage` (`TokenUsage`) on `RunFinishedEvent` and `RunErrorEvent`.
+- `RunStartedEvent.protocolVersion` and `RunAgentInput.protocolVersion`, with
+  the constant `agUiProtocolVersion`. The client does not add the field for
+  you, because a 0.x agent may reject a field it does not know.
+- `FileSource`, the third part source: a handle a model provider issued for
+  bytes already uploaded to it.
+- `MessageContent.text` and `MessageContent.hasMedia`.
+
+### Changed
+- The parts take their 1.0 names: `ContentPart`, `TextPart`, `ImagePart`,
+  `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, and
+  `MessageContent` for the string-or-parts union. The old names
+  (`InputContent`, `TextInputContent`, …, `InputContentSource`,
+  `UserMessageContent`) remain as deprecated aliases.
+- A `null` on an optional field that predates 1.0 still reads as absent, since
+  Python producers before `ag-ui-protocol` 0.1.20 wrote one for every unset
+  field. A field 1.0 introduced rejects a `null`, except those the TypeScript
+  client's compatibility boundary also tolerates (`subagentRunId`,
+  `RUN_ERROR.usage`, and `provider` and the detail counts in `TokenUsage`).
+
+### Not included
+- Capabilities (`AgentCapabilities` and the declarations inside it, including
+  `SubagentInfo`): this client does not fetch them yet.
+- The conformance stream corpus (`spec/1.0/conformance`): it tests a client's
+  run pipeline (verification, enforcement warnings), which this SDK does not
+  have; it decodes events one at a time.
+
 ## [0.3.0]
 
 ### Breaking Changes (review-fix pass)

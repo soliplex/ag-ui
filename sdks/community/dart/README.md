@@ -14,7 +14,7 @@ Or add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  ag_ui: ^0.3.0
+  ag_ui: ^1.0.0
 ```
 
 ## Features
@@ -159,15 +159,15 @@ final input = SimpleRunAgentInput(
     UserMessage.multimodal(
       id: 'msg_${DateTime.now().millisecondsSinceEpoch}',
       parts: [
-        TextInputContent('What is in this image?'),
-        ImageInputContent(
+        TextPart('What is in this image?'),
+        ImagePart(
           // UrlSource.mimeType is optional; DataSource requires it.
           source: UrlSource(
             value: 'https://example.com/photo.png',
             mimeType: 'image/png',
           ),
         ),
-        DocumentInputContent(
+        DocumentPart(
           source: DataSource(value: base64Pdf, mimeType: 'application/pdf'),
         ),
       ],
@@ -177,7 +177,9 @@ final input = SimpleRunAgentInput(
 ```
 
 The `content` getter returns the text for text-only messages and `null` for
-multimodal ones; read `messageContent` for the typed union.
+multimodal ones; read `messageContent` for the typed union. Since protocol
+1.0 a tool result is the same union: `ToolMessage` and `ToolCallResultEvent`
+carry a `messageContent` too, and their `content` getter returns its text.
 
 The default `UserMessage({content})` constructor is not `const` because it
 wraps the string in `TextContent` at runtime. Use `UserMessage.fromContent` to
@@ -410,10 +412,9 @@ events directly:
   unambiguously refers to `dart:async.TimeoutError` — runtime behavior
   changes accordingly.
 
-The `THINKING_TEXT_MESSAGE_*` event types are also deprecated in 0.2.0
-in favor of the canonical `REASONING_*` events; decoding remains
-supported until 1.0.0. See `CHANGELOG.md` "Deprecated" for the migration
-mapping.
+The `THINKING_*` event types, deprecated in 0.2.0 in favor of the canonical
+`REASONING_*` events, were removed in 1.0.0 along with protocol 1.0. See
+`CHANGELOG.md` for the 1.0.0 migration.
 
 ## Errors
 

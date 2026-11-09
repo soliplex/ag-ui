@@ -59,12 +59,14 @@ class ToolCall extends AGUIModel {
   final String type;
   final FunctionCall function;
   final String? encryptedValue;
+  final Map<String, dynamic>? metadata;
 
   const ToolCall({
     required this.id,
     this.type = 'function',
     required this.function,
     this.encryptedValue,
+    this.metadata,
   });
 
   factory ToolCall.fromJson(Map<String, dynamic> json) {
@@ -79,6 +81,7 @@ class ToolCall extends AGUIModel {
         'encryptedValue',
         'encrypted_value',
       ),
+      metadata: JsonDecoder.optionalMetadata(json, 'metadata'),
     );
   }
 
@@ -88,6 +91,7 @@ class ToolCall extends AGUIModel {
         'type': type,
         'function': function.toJson(),
         if (encryptedValue != null) 'encryptedValue': encryptedValue,
+        if (metadata != null) 'metadata': metadata,
       };
 
   // `encryptedValue` is nullable — sentinel lets callers clear it
@@ -99,6 +103,7 @@ class ToolCall extends AGUIModel {
     String? type,
     FunctionCall? function,
     Object? encryptedValue = kUnsetSentinel,
+    Object? metadata = kUnsetSentinel,
   }) {
     return ToolCall(
       id: id ?? this.id,
@@ -107,6 +112,9 @@ class ToolCall extends AGUIModel {
       encryptedValue: identical(encryptedValue, kUnsetSentinel)
           ? this.encryptedValue
           : encryptedValue as String?,
+      metadata: identical(metadata, kUnsetSentinel)
+          ? this.metadata
+          : metadata as Map<String, dynamic>?,
     );
   }
 }
@@ -138,10 +146,7 @@ class Tool extends AGUIModel {
       name: JsonDecoder.requireField<String>(json, 'name'),
       description: JsonDecoder.requireField<String>(json, 'description'),
       parameters: json['parameters'], // Allow any JSON Schema
-      metadata: JsonDecoder.optionalField<Map<String, dynamic>>(
-        json,
-        'metadata',
-      ),
+      metadata: JsonDecoder.optionalMetadata(json, 'metadata'),
     );
   }
 

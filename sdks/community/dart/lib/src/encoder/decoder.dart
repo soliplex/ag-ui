@@ -349,35 +349,6 @@ class EventDecoder {
         Validators.requireNonEmpty(event.messageId, 'messageId');
       case TextMessageChunkEvent():
         break; // All fields optional — nothing to validate
-      // TODO(1.0.0): Remove the following deprecated cases + their event classes:
-      //   ThinkingTextMessageStartEvent, ThinkingTextMessageContentEvent,
-      //   ThinkingTextMessageEndEvent, ThinkingContentEvent.
-      //   Also remove EventType.thinkingTextMessage* / thinkingContent enum
-      //   values, the _kThinkingTextMessage*Deprecation / _kThinkingContent*
-      //   Deprecation constants, and the deprecated TimeoutError typedef in
-      //   client/errors.dart.
-      // ignore: deprecated_member_use_from_same_package
-      case ThinkingTextMessageStartEvent():
-        // Deprecated; no `messageId` on the wire by design — matches the
-        // canonical TS `THINKING_TEXT_MESSAGE_START` shape this event
-        // mirrors. The migration target [ReasoningMessageStartEvent]
-        // adds `messageId` per canonical `REASONING_MESSAGE_START`. Do
-        // NOT add validation here at 1.0.0 removal — that would tighten
-        // the deprecated contract retroactively and break consumers
-        // still on the old wire shape.
-        break;
-      // ignore: deprecated_member_use_from_same_package
-      case ThinkingTextMessageContentEvent():
-        // Empty `delta` is accepted — relaxed to match the canonical
-        // `z.string()` / `delta: str` contract (parity with
-        // `TextMessageContentEvent`, `ReasoningMessageContentEvent`, etc.).
-        break;
-      // ignore: deprecated_member_use_from_same_package
-      case ThinkingTextMessageEndEvent():
-        // Same rationale as `ThinkingTextMessageStartEvent` above: no
-        // `messageId` on the wire by design; the migration target
-        // [ReasoningMessageEndEvent] adds it.
-        break;
       case ToolCallStartEvent():
         Validators.requireNonEmpty(event.toolCallId, 'toolCallId');
         Validators.requireNonEmpty(event.toolCallName, 'toolCallName');
@@ -393,17 +364,8 @@ class EventDecoder {
       case ToolCallResultEvent():
         Validators.requireNonEmpty(event.messageId, 'messageId');
         Validators.requireNonEmpty(event.toolCallId, 'toolCallId');
-      // `content` may be empty per canonical TS/Python schemas
-      // (`ToolCallResultEventSchema.content: z.string()` / pydantic
-      // `content: str`). Do not enforce non-empty here.
-      case ThinkingStartEvent():
-        break;
-      // ignore: deprecated_member_use_from_same_package
-      case ThinkingContentEvent():
-        // Empty `delta` is accepted — relaxed to match canonical contract.
-        break;
-      case ThinkingEndEvent():
-        break;
+      // `content` may be an empty string or an empty list of parts; the
+      // 1.0 schema sets no minimum. Do not enforce non-empty here.
       case StateSnapshotEvent():
         // `snapshot` is an opaque JSON value — presence is enforced in
         // `StateSnapshotEvent.fromJson`; there is no non-empty constraint
@@ -441,6 +403,13 @@ class EventDecoder {
         Validators.validateRunId(event.runId);
       case RunErrorEvent():
         Validators.requireNonEmpty(event.message, 'message');
+      case SubagentStartedEvent():
+        Validators.requireNonEmpty(event.subagentRunId, 'subagentRunId');
+        Validators.requireNonEmpty(event.name, 'name');
+      case SubagentFinishedEvent():
+        Validators.requireNonEmpty(event.subagentRunId, 'subagentRunId');
+      case SubagentErrorEvent():
+        Validators.requireNonEmpty(event.subagentRunId, 'subagentRunId');
       case StepStartedEvent():
         Validators.requireNonEmpty(event.stepName, 'stepName');
       case StepFinishedEvent():

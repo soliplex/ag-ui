@@ -338,8 +338,7 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
           () {
         // Canonical TS/Python schemas allow empty `delta`
         // (`TextMessageContentEventSchema.delta: z.string()`). The
-        // decoder pipeline must NOT reject it. The deprecated
-        // `Thinking*Content` events now also accept empty `delta`.
+        // decoder pipeline must NOT reject it.
         final event = TextMessageContentEvent(
           messageId: 'msg123',
           delta: '',
@@ -347,19 +346,6 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
 
         expect(decoder.validate(event), isTrue);
       });
-
-      test(
-        'accepts empty delta in deprecated thinking-text content event',
-        () {
-          // Relaxed to match the canonical `z.string()` contract — empty
-          // `delta` is now accepted. Consumers should migrate to
-          // [ReasoningMessageContentEvent] which uses the relaxed contract.
-          // ignore: deprecated_member_use_from_same_package
-          final event = ThinkingTextMessageContentEvent(delta: '');
-
-          expect(decoder.validate(event), isTrue);
-        },
-      );
 
       test('throws ValidationError for empty tool call fields', () {
         final event = ToolCallStartEvent(
@@ -388,7 +374,7 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
       });
 
       test('validates events without specific validation rules', () {
-        final event = ThinkingStartEvent(title: 'Planning');
+        final event = ReasoningMessageChunkEvent();
         expect(decoder.validate(event), isTrue);
 
         final event2 = StateSnapshotEvent(snapshot: {});
@@ -463,8 +449,7 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
 
       // fromRawSseStream path: push the same frames as a single-chunk stream.
       final streamAdapter = EventStreamAdapter();
-      final rawStream =
-          Stream<String>.fromIterable(frames);
+      final rawStream = Stream<String>.fromIterable(frames);
       final fromRawEvents =
           await streamAdapter.fromRawSseStream(rawStream).toList();
 

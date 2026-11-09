@@ -207,8 +207,8 @@ void main() {
       // Regression: multimodal content must validate, not throw on a null
       // `content` getter as the retired validateMessageContent did.
       final content = MultimodalContent([
-        TextInputContent('look'),
-        const ImageInputContent(
+        TextPart('look'),
+        const ImagePart(
           source: UrlSource(value: 'https://example.com/i.png'),
         ),
       ]);

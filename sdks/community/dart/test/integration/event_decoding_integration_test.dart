@@ -336,28 +336,19 @@ void main() {
         expect(resultEvent.role, equals(ToolCallResultRole.tool));
       });
 
-      test('decodes thinking events', () {
-        final events = [
-          {'type': 'THINKING_START', 'title': 'Planning approach'},
-          {'type': 'THINKING_TEXT_MESSAGE_START'},
-          {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Let me think...'},
-          {'type': 'THINKING_TEXT_MESSAGE_END'},
-          {'type': 'THINKING_END'},
-        ];
-
-        final decodedEvents =
-            events.map((json) => decoder.decodeJson(json)).toList();
-
-        expect(decodedEvents[0], isA<ThinkingStartEvent>());
-        expect((decodedEvents[0] as ThinkingStartEvent).title,
-            equals('Planning approach'));
-        // ignore: deprecated_member_use_from_same_package
-        expect(decodedEvents[1], isA<ThinkingTextMessageStartEvent>());
-        // ignore: deprecated_member_use_from_same_package
-        expect(decodedEvents[2], isA<ThinkingTextMessageContentEvent>());
-        // ignore: deprecated_member_use_from_same_package
-        expect(decodedEvents[3], isA<ThinkingTextMessageEndEvent>());
-        expect(decodedEvents[4], isA<ThinkingEndEvent>());
+      test('rejects the THINKING_* events protocol 1.0 retired', () {
+        for (final type in [
+          'THINKING_START',
+          'THINKING_TEXT_MESSAGE_START',
+          'THINKING_TEXT_MESSAGE_CONTENT',
+          'THINKING_TEXT_MESSAGE_END',
+          'THINKING_END',
+        ]) {
+          expect(
+            () => decoder.decodeJson({'type': type, 'messageId': 'm1'}),
+            throwsA(isA<DecodingError>()),
+          );
+        }
       });
 
       test('decodes state management events', () {

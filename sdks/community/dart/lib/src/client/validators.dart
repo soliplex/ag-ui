@@ -233,10 +233,8 @@ class Validators {
 
   /// Validates user message content (text or multimodal parts).
   ///
-  /// Multimodal content must have a non-empty list of parts, and each part must
-  /// satisfy its protocol invariants (re-checked here because the constructor
-  /// `assert`s are stripped in release builds).
-  static void validateUserMessageContent(UserMessageContent content) {
+  /// Multimodal content must have a non-empty list of parts.
+  static void validateUserMessageContent(MessageContent content) {
     switch (content) {
       case TextContent():
         return;
@@ -249,36 +247,6 @@ class Validators {
             value: parts,
           );
         }
-        for (var i = 0; i < parts.length; i++) {
-          _validateInputContentPart(parts[i], i);
-        }
-    }
-  }
-
-  // Release-mode defense-in-depth: BinaryInputContent.fromJson and the
-  // constructor asserts already enforce these rules on every normal path, but
-  // asserts are stripped in release builds where a caller could construct an
-  // invalid part directly.
-  static void _validateInputContentPart(InputContent part, int index) {
-    if (part is! BinaryInputContent) {
-      return;
-    }
-    if (part.mimeType.isEmpty) {
-      throw ValidationError(
-        'Binary content part at index $index requires a non-empty mimeType',
-        field: 'content[$index].mimeType',
-        constraint: 'non-empty',
-        value: part.mimeType,
-      );
-    }
-    if (part.id == null && part.url == null && part.data == null) {
-      throw ValidationError(
-        'Binary content part at index $index requires at least one of '
-        'id, url, or data',
-        field: 'content[$index]',
-        constraint: 'requires-payload',
-        value: part,
-      );
     }
   }
 

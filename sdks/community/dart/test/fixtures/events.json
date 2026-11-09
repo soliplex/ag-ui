@@ -303,47 +303,6 @@
       "runId": "run_06"
     }
   ],
-  "thinking_events": [
-    {
-      "type": "RUN_STARTED",
-      "threadId": "thread_06",
-      "runId": "run_07"
-    },
-    {
-      "type": "THINKING_START",
-      "title": "Analyzing request"
-    },
-    {
-      "type": "THINKING_CONTENT",
-      "delta": "Let me think about this..."
-    },
-    {
-      "type": "THINKING_CONTENT",
-      "delta": " The user is asking about..."
-    },
-    {
-      "type": "THINKING_END"
-    },
-    {
-      "type": "TEXT_MESSAGE_START",
-      "messageId": "msg_12",
-      "role": "assistant"
-    },
-    {
-      "type": "TEXT_MESSAGE_CONTENT",
-      "messageId": "msg_12",
-      "delta": "Based on my analysis..."
-    },
-    {
-      "type": "TEXT_MESSAGE_END",
-      "messageId": "msg_12"
-    },
-    {
-      "type": "RUN_FINISHED",
-      "threadId": "thread_06",
-      "runId": "run_07"
-    }
-  ],
   "step_events": [
     {
       "type": "RUN_STARTED",
@@ -579,28 +538,6 @@
       "type": "RUN_FINISHED",
       "threadId": "thread_13",
       "runId": "run_14"
-    }
-  ],
-  "thinking_text_message_legacy": [
-    {
-      "type": "RUN_STARTED",
-      "threadId": "thread_14",
-      "runId": "run_15"
-    },
-    {
-      "type": "THINKING_TEXT_MESSAGE_START"
-    },
-    {
-      "type": "THINKING_TEXT_MESSAGE_CONTENT",
-      "delta": "Let me think..."
-    },
-    {
-      "type": "THINKING_TEXT_MESSAGE_END"
-    },
-    {
-      "type": "RUN_FINISHED",
-      "threadId": "thread_14",
-      "runId": "run_15"
     }
   ]
 }
